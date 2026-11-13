@@ -722,6 +722,19 @@ a{color:var(--accent);text-decoration:none}
 .status-pill .dot.red{background:var(--red)}
 @keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
 .status-pill .dot.active{animation:blink 1.6s infinite}
+/* ─── BLE connected — blue pulsing ring (mirrors ESP32 LED) ─────── */
+@keyframes ble-pulse{
+  0%  {box-shadow:0 0 0 0   rgba(96,165,250,.7),0 0 0 0   rgba(96,165,250,.4)}
+  60% {box-shadow:0 0 0 7px rgba(96,165,250,0),0 0 0 14px rgba(96,165,250,0)}
+  100%{box-shadow:0 0 0 0   rgba(96,165,250,.7),0 0 0 0   rgba(96,165,250,.4)}
+}
+@keyframes ble-pulse-lg{
+  0%  {box-shadow:0 0 0 0   rgba(96,165,250,.8),0 0 0 0   rgba(96,165,250,.3)}
+  60% {box-shadow:0 0 0 10px rgba(96,165,250,0),0 0 0 20px rgba(96,165,250,0)}
+  100%{box-shadow:0 0 0 0   rgba(96,165,250,.8),0 0 0 0   rgba(96,165,250,.3)}
+}
+.ble-pulse    {animation:ble-pulse    1.2s cubic-bezier(.4,0,.6,1) infinite}
+.ble-pulse-lg {animation:ble-pulse-lg 1.2s cubic-bezier(.4,0,.6,1) infinite}
 .uptime-badge{font-size:.72rem;color:var(--muted);padding:4px 10px;border-radius:20px;border:1px solid var(--border);background:var(--surface2)}
 .topbar-nav a{font-size:.78rem;color:var(--muted);padding:4px 10px;border-radius:5px;border:1px solid transparent;transition:all .15s}
 .topbar-nav a:hover{color:var(--text);border-color:var(--border);background:var(--surface2)}
@@ -940,10 +953,18 @@ tbody td{padding:7px 10px;color:#cbd5e1;white-space:nowrap}
       </div>
 
       <!-- Android BLE -->
-      <div style="display:flex;align-items:center;gap:12px;padding:14px 16px;border-radius:10px;border:1px solid var(--border);background:var(--surface)">
-        <div id="ov-ble-dot" style="width:11px;height:11px;border-radius:50%;background:var(--muted);flex-shrink:0"></div>
+      <div id="ov-ble-card" style="display:flex;align-items:center;gap:14px;padding:14px 16px;border-radius:10px;border:1px solid var(--border);background:var(--surface);transition:border-color .3s,background .3s">
+        <!-- Bluetooth icon with pulsing ring wrapper -->
+        <div style="position:relative;flex-shrink:0;width:36px;height:36px;display:flex;align-items:center;justify-content:center">
+          <div id="ov-ble-ring" style="position:absolute;inset:0;border-radius:50%;background:#1e3a5f;transition:background .3s"></div>
+          <div id="ov-ble-dot" style="position:absolute;inset:0;border-radius:50%;background:transparent"></div>
+          <!-- Bluetooth SVG icon -->
+          <svg id="ov-ble-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" style="position:relative;z-index:1">
+            <path d="M6.5 7.5L17.5 16.5M17.5 7.5L6.5 16.5M12 3V21M12 3L18 9L12 15M12 21L18 15" stroke="#4b5680" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
         <div style="min-width:0">
-          <div id="ov-ble-label" style="font-size:.8rem;font-weight:600;color:#f1f5f9">📱 Android Device</div>
+          <div id="ov-ble-label" style="font-size:.8rem;font-weight:600;color:#f1f5f9">Android Device</div>
           <div id="ov-ble-sub" style="font-size:.68rem;color:var(--muted);margin-top:1px">Bluetooth not connected</div>
         </div>
       </div>
@@ -1127,8 +1148,10 @@ tbody td{padding:7px 10px;color:#cbd5e1;white-space:nowrap}
     </div>
 
     <!-- BLE / Android connection status banner -->
-    <div id="ble-status-row" style="display:none;align-items:center;gap:12px;padding:11px 18px;border-radius:10px;border:1px solid var(--border);background:var(--surface);margin-bottom:8px">
-      <div id="ble-dot" style="width:10px;height:10px;border-radius:50%;background:var(--muted);flex-shrink:0"></div>
+    <div id="ble-status-row" style="display:none;align-items:center;gap:12px;padding:11px 18px;border-radius:10px;border:1px solid var(--border);background:var(--surface);margin-bottom:8px;transition:border-color .3s,background .3s">
+      <div style="position:relative;width:14px;height:14px;flex-shrink:0">
+        <div id="ble-dot" style="width:14px;height:14px;border-radius:50%;background:var(--muted);position:absolute"></div>
+      </div>
       <div id="ble-status-text" style="font-size:.82rem;font-weight:600;color:var(--muted)">Android — waiting...</div>
     </div>
 
@@ -1338,22 +1361,49 @@ function updateOverviewStatus(d) {
     espSub.textContent = 'Not seen — set WiFi credentials & re-upload';
   }
 
-  // Android BLE card
-  const bleDot = document.getElementById('ov-ble-dot');
-  const bleLbl = document.getElementById('ov-ble-label');
-  const bleSub = document.getElementById('ov-ble-sub');
+  // Android BLE card — animated blue pulse when connected (mirrors ESP32 LED)
+  const bleCard = document.getElementById('ov-ble-card');
+  const bleRing = document.getElementById('ov-ble-ring');
+  const bleDot  = document.getElementById('ov-ble-dot');
+  const bleIcon = document.getElementById('ov-ble-icon');
+  const bleLbl  = document.getElementById('ov-ble-label');
+  const bleSub  = document.getElementById('ov-ble-sub');
   if (!online) {
-    bleDot.style.background = 'var(--muted)';
-    bleLbl.style.color = '#f1f5f9';
-    bleSub.textContent = 'Unknown — ESP32 not online';
+    // grey — ESP32 offline, can't know BLE state
+    bleCard.style.borderColor  = 'var(--border)';
+    bleCard.style.background   = 'var(--surface)';
+    bleRing.style.background   = '#1e3a5f';
+    bleDot.className           = '';
+    bleDot.style.background    = 'transparent';
+    bleIcon.querySelector('path').setAttribute('stroke','#4b5680');
+    bleLbl.textContent         = 'Android Device';
+    bleLbl.style.color         = '#f1f5f9';
+    bleSub.textContent         = 'Unknown — ESP32 not online';
+    bleSub.style.color         = 'var(--muted)';
   } else if (bleConn) {
-    bleDot.style.background = 'var(--green)';
-    bleLbl.style.color = 'var(--green)';
-    bleSub.textContent = 'Paired & Connected via BLE ✓';
+    // 🔵 CONNECTED — blue pulsing ring, like the ESP32 LED blinking blue
+    bleCard.style.borderColor  = 'rgba(96,165,250,.4)';
+    bleCard.style.background   = 'rgba(96,165,250,.06)';
+    bleRing.style.background   = '#1e3a5f';
+    bleDot.className           = 'ble-pulse-lg';
+    bleDot.style.background    = '#60a5fa';
+    bleIcon.querySelector('path').setAttribute('stroke','#60a5fa');
+    bleLbl.textContent         = 'Android Device';
+    bleLbl.style.color         = '#60a5fa';
+    bleSub.textContent         = '● BLE Connected — target paired ✓';
+    bleSub.style.color         = '#60a5fa';
   } else {
-    bleDot.style.background = 'var(--amber)';
-    bleLbl.style.color = 'var(--amber)';
-    bleSub.textContent = 'Not connected — pair in Bluetooth settings';
+    // amber — ESP32 online but Android not paired
+    bleCard.style.borderColor  = 'var(--border)';
+    bleCard.style.background   = 'var(--surface)';
+    bleRing.style.background   = '#2d1f0a';
+    bleDot.className           = '';
+    bleDot.style.background    = 'transparent';
+    bleIcon.querySelector('path').setAttribute('stroke','var(--amber)');
+    bleLbl.textContent         = 'Android Device';
+    bleLbl.style.color         = 'var(--amber)';
+    bleSub.textContent         = 'Not connected — pair "ESP32 Keyboard" in BT settings';
+    bleSub.style.color         = 'var(--amber)';
   }
 
   // Host USB card
@@ -1643,21 +1693,31 @@ function updateControlPanel(d) {
     document.getElementById('esp32-checklist').style.display = 'none';
   }
 
-  // ── BLE / Android connection status — always visible ──────────────────
+  // ── BLE / Android connection status — always visible, blue pulse when connected
   const bleRow = document.getElementById('ble-status-row');
   const bleDot = document.getElementById('ble-dot');
   const bleTxt = document.getElementById('ble-status-text');
   bleRow.style.display = 'flex';   // always show
   if (!online) {
+    bleDot.className        = '';
     bleDot.style.background = 'var(--muted)';
+    bleRow.style.borderColor= 'var(--border)';
+    bleRow.style.background = 'var(--surface)';
     bleTxt.textContent = '📱 Android — Unknown (ESP32 offline)';
     bleTxt.style.color = 'var(--muted)';
   } else if (bleConn) {
-    bleDot.style.background = 'var(--green)';
-    bleTxt.textContent = '📱 Android — Paired & Connected ✓';
-    bleTxt.style.color = 'var(--green)';
+    // blue pulsing dot — mirrors the blinking blue LED on the ESP32
+    bleDot.className        = 'ble-pulse';
+    bleDot.style.background = '#60a5fa';
+    bleRow.style.borderColor= 'rgba(96,165,250,.4)';
+    bleRow.style.background = 'rgba(96,165,250,.06)';
+    bleTxt.textContent = '📱 Android — BLE Connected ✓';
+    bleTxt.style.color = '#60a5fa';
   } else {
+    bleDot.className        = '';
     bleDot.style.background = 'var(--amber)';
+    bleRow.style.borderColor= 'var(--border)';
+    bleRow.style.background = 'var(--surface)';
     bleTxt.textContent = '📱 Android — Not connected  (pair via Bluetooth settings)';
     bleTxt.style.color = 'var(--amber)';
   }
