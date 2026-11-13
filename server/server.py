@@ -565,266 +565,605 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>ESP32 Lab — Dashboard</title>
+<title>ESP32 Lab · Dashboard</title>
 <style>
+:root{
+  --bg:#0a0c14;--surface:#111420;--surface2:#171b2e;--border:#1f2440;
+  --text:#e2e8f0;--muted:#4b5680;--accent:#4f8ef7;--green:#22d47a;
+  --amber:#f5a623;--red:#f75f5f;--purple:#9f7aea;--cyan:#22d3ee;
+  --sidebar:220px;
+}
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,"Segoe UI",system-ui,sans-serif;background:#0f1117;color:#e2e8f0;min-height:100vh}
-a{color:#60a5fa;text-decoration:none}
-/* ── top bar ── */
-.topbar{display:flex;align-items:center;gap:12px;padding:14px 24px;background:#1a1d27;border-bottom:1px solid #2d3148}
-.topbar h1{font-size:1rem;font-weight:600;letter-spacing:.03em;color:#f1f5f9}
-.topbar .sub{font-size:.75rem;color:#64748b;margin-left:4px}
-.dot{width:8px;height:8px;border-radius:50%;background:#22c55e;margin-left:auto;animation:pulse 2s infinite}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
-.uptime{font-size:.75rem;color:#64748b}
-/* ── layout ── */
-.wrap{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px;padding:20px 24px}
-.card{background:#1a1d27;border:1px solid #2d3148;border-radius:10px;padding:18px}
-.card h2{font-size:.8rem;font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:.06em;margin-bottom:14px}
-/* ── stat row ── */
-.stats{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:0}
-.stat{background:#0f1117;border-radius:8px;padding:12px 14px}
-.stat .val{font-size:1.6rem;font-weight:700;color:#f1f5f9;line-height:1}
-.stat .lbl{font-size:.72rem;color:#64748b;margin-top:4px}
-.stat.ok .val{color:#22c55e}
-.stat.warn .val{color:#f59e0b}
-.stat.err .val{color:#f87171}
-/* ── speed bar ── */
-.speed-wrap{margin-top:4px}
-.speed-bar{height:6px;border-radius:3px;background:#22c55e;transition:width .5s ease;max-width:100%}
-.speed-lbl{font-size:.72rem;color:#64748b;margin-top:4px}
-/* ── category bars ── */
-.cat-row{display:flex;align-items:center;gap:8px;margin-bottom:8px}
-.cat-name{font-size:.78rem;color:#94a3b8;width:90px;flex-shrink:0}
-.cat-bar-wrap{flex:1;background:#0f1117;border-radius:3px;height:8px;overflow:hidden}
-.cat-bar{height:8px;border-radius:3px;background:#3b82f6;transition:width .4s ease}
-.cat-count{font-size:.72rem;color:#64748b;width:48px;text-align:right;flex-shrink:0}
-/* ── history table ── */
-.htable-wrap{overflow-x:auto;max-height:260px;overflow-y:auto}
-table{width:100%;border-collapse:collapse;font-size:.75rem}
-th{color:#64748b;text-align:left;padding:4px 8px;border-bottom:1px solid #2d3148;position:sticky;top:0;background:#1a1d27;font-weight:500}
-td{padding:5px 8px;border-bottom:1px solid #1e2235;color:#cbd5e1;white-space:nowrap}
-td.ok{color:#22c55e}
-td.fail{color:#f87171}
-tr:hover td{background:#20243a}
-/* ── device list ── */
-.dev-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #1e2235}
-.dev-row:last-child{border-bottom:none}
-.dev-ip{font-size:.8rem;color:#f1f5f9;font-weight:500;min-width:120px}
-.dev-meta{font-size:.72rem;color:#64748b}
-.dev-badge{background:#1e3a5f;color:#60a5fa;border-radius:12px;padding:2px 8px;font-size:.7rem}
-/* ── error log ── */
-.err-list{max-height:180px;overflow-y:auto}
-.err-item{padding:6px 0;border-bottom:1px solid #1e2235;font-size:.75rem}
-.err-item:last-child{border-bottom:none}
-.err-item .et{color:#f87171;font-weight:500}
-.err-item .ef{color:#94a3b8}
-.err-item .em{color:#64748b}
-.no-data{color:#64748b;font-size:.8rem;padding:12px 0;text-align:center}
-/* ── nav links ── */
-.nav{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
-.nav a{font-size:.78rem;padding:5px 12px;border-radius:5px;background:#1e2235;color:#94a3b8;border:1px solid #2d3148;transition:background .15s}
-.nav a:hover{background:#2d3148;color:#f1f5f9}
+html,body{height:100%;overflow:hidden}
+body{font-family:-apple-system,"Segoe UI",system-ui,sans-serif;background:var(--bg);color:var(--text);display:flex;flex-direction:column}
+a{color:var(--accent);text-decoration:none}
+/* ─── scrollbar ─────────────────────────────────────────────────── */
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+/* ─── topbar ────────────────────────────────────────────────────── */
+.topbar{
+  display:flex;align-items:center;gap:14px;
+  padding:0 24px;height:54px;flex-shrink:0;
+  background:var(--surface);border-bottom:1px solid var(--border);
+  z-index:10;
+}
+.topbar .logo{display:flex;align-items:center;gap:10px}
+.topbar .logo svg{flex-shrink:0}
+.topbar .logo-text{font-size:.95rem;font-weight:700;letter-spacing:.02em;color:#f1f5f9}
+.topbar .logo-sub{font-size:.72rem;color:var(--muted)}
+.topbar-right{display:flex;align-items:center;gap:16px;margin-left:auto}
+.status-pill{display:flex;align-items:center;gap:6px;padding:4px 12px;border-radius:20px;border:1px solid var(--border);font-size:.75rem;color:var(--muted);background:var(--surface2)}
+.status-pill .dot{width:7px;height:7px;border-radius:50%;background:var(--green)}
+.status-pill .dot.red{background:var(--red)}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+.status-pill .dot.active{animation:blink 1.6s infinite}
+.uptime-badge{font-size:.72rem;color:var(--muted);padding:4px 10px;border-radius:20px;border:1px solid var(--border);background:var(--surface2)}
+.topbar-nav a{font-size:.78rem;color:var(--muted);padding:4px 10px;border-radius:5px;border:1px solid transparent;transition:all .15s}
+.topbar-nav a:hover{color:var(--text);border-color:var(--border);background:var(--surface2)}
+/* ─── body layout ───────────────────────────────────────────────── */
+.app-body{display:flex;flex:1;overflow:hidden}
+/* ─── sidebar ───────────────────────────────────────────────────── */
+.sidebar{
+  width:var(--sidebar);flex-shrink:0;
+  background:var(--surface);border-right:1px solid var(--border);
+  padding:16px 0;overflow-y:auto;
+}
+.sidebar-section{padding:0 12px;margin-bottom:4px}
+.sidebar-label{font-size:.65rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;padding:8px 8px 4px}
+.nav-item{
+  display:flex;align-items:center;gap:10px;
+  padding:8px 10px;border-radius:7px;cursor:pointer;
+  font-size:.8rem;color:var(--muted);transition:all .15s;
+  border:1px solid transparent;user-select:none;
+}
+.nav-item:hover{color:var(--text);background:var(--surface2)}
+.nav-item.active{color:var(--accent);background:rgba(79,142,247,.08);border-color:rgba(79,142,247,.2)}
+.nav-item .icon{width:16px;height:16px;flex-shrink:0;opacity:.7}
+.nav-item.active .icon{opacity:1}
+.nav-badge{margin-left:auto;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:1px 7px;font-size:.65rem;color:var(--muted)}
+.nav-badge.red{background:rgba(247,95,95,.15);border-color:rgba(247,95,95,.3);color:var(--red)}
+.sidebar-divider{border:none;border-top:1px solid var(--border);margin:8px 12px}
+/* ─── main ──────────────────────────────────────────────────────── */
+.main{flex:1;overflow-y:auto;padding:20px}
+.page{display:none}
+.page.active{display:block}
+/* ─── section header ────────────────────────────────────────────── */
+.section-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+.section-title{font-size:1rem;font-weight:600;color:#f1f5f9}
+.section-sub{font-size:.75rem;color:var(--muted);margin-top:2px}
+.refresh-tag{font-size:.7rem;color:var(--muted);display:flex;align-items:center;gap:5px}
+/* ─── kpi grid ──────────────────────────────────────────────────── */
+.kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
+.kpi{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px 18px;position:relative;overflow:hidden}
+.kpi::before{content:'';position:absolute;top:0;left:0;right:0;height:2px}
+.kpi.blue::before{background:var(--accent)}
+.kpi.green::before{background:var(--green)}
+.kpi.amber::before{background:var(--amber)}
+.kpi.red::before{background:var(--red)}
+.kpi-label{font-size:.7rem;font-weight:500;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px}
+.kpi-val{font-size:1.9rem;font-weight:700;line-height:1;color:#f1f5f9;font-variant-numeric:tabular-nums}
+.kpi-sub{font-size:.72rem;color:var(--muted);margin-top:5px}
+.kpi-icon{position:absolute;right:14px;top:50%;transform:translateY(-50%);opacity:.07;font-size:2.4rem}
+/* ─── row of two panels ─────────────────────────────────────────── */
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
+.row3{display:grid;grid-template-columns:2fr 1fr;gap:12px;margin-bottom:12px}
+/* ─── card ──────────────────────────────────────────────────────── */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px}
+.card-title{font-size:.75rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:14px;display:flex;align-items:center;gap:8px}
+.card-title span{color:#f1f5f9;font-weight:700;font-size:.85rem;text-transform:none;letter-spacing:0}
+/* ─── speed chart ───────────────────────────────────────────────── */
+.speed-num{font-size:2.4rem;font-weight:700;color:#f1f5f9;line-height:1;font-variant-numeric:tabular-nums}
+.speed-unit{font-size:.8rem;color:var(--muted);margin-top:4px}
+.speed-status{display:inline-flex;align-items:center;gap:5px;margin-top:8px;padding:3px 10px;border-radius:12px;font-size:.72rem;font-weight:500}
+.speed-status.idle{background:rgba(75,86,128,.2);color:var(--muted)}
+.speed-status.active{background:rgba(34,212,122,.12);color:var(--green)}
+/* ─── sparkline ─────────────────────────────────────────────────── */
+.sparkline{margin-top:16px}
+.sparkline svg{width:100%;overflow:visible}
+/* ─── progress bars ─────────────────────────────────────────────── */
+.prog-row{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.prog-row:last-child{margin-bottom:0}
+.prog-label{font-size:.75rem;color:var(--muted);width:92px;flex-shrink:0}
+.prog-track{flex:1;height:7px;background:var(--surface2);border-radius:4px;overflow:hidden}
+.prog-fill{height:7px;border-radius:4px;transition:width .5s cubic-bezier(.4,0,.2,1)}
+.prog-meta{font-size:.7rem;color:var(--muted);min-width:72px;text-align:right;flex-shrink:0}
+/* ─── table ─────────────────────────────────────────────────────── */
+.table-wrap{overflow-x:auto;overflow-y:auto;max-height:300px}
+table{width:100%;border-collapse:collapse;font-size:.76rem}
+thead th{padding:6px 10px;text-align:left;font-size:.7rem;font-weight:500;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--surface);white-space:nowrap}
+tbody tr{border-bottom:1px solid rgba(31,36,64,.6);transition:background .1s}
+tbody tr:hover{background:var(--surface2)}
+tbody td{padding:7px 10px;color:#cbd5e1;white-space:nowrap}
+.badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:10px;font-size:.68rem;font-weight:500}
+.badge.ok{background:rgba(34,212,122,.12);color:var(--green)}
+.badge.fail{background:rgba(247,95,95,.12);color:var(--red)}
+.badge.cat{background:var(--surface2);border:1px solid var(--border);color:var(--muted)}
+/* ─── device cards ──────────────────────────────────────────────── */
+.dev-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px}
+.dev-card{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:14px}
+.dev-card .dev-ip{font-size:.82rem;font-weight:600;color:#f1f5f9;margin-bottom:8px;display:flex;align-items:center;gap:6px}
+.dev-card .dev-ip::before{content:'';width:7px;height:7px;border-radius:50%;background:var(--green);flex-shrink:0}
+.dev-stat-row{display:flex;justify-content:space-between;margin-bottom:4px}
+.dev-stat-row .dk{font-size:.7rem;color:var(--muted)}
+.dev-stat-row .dv{font-size:.7rem;color:#f1f5f9;font-weight:500}
+/* ─── error list ────────────────────────────────────────────────── */
+.err-feed{display:flex;flex-direction:column;gap:8px;max-height:280px;overflow-y:auto}
+.err-item{background:rgba(247,95,95,.06);border:1px solid rgba(247,95,95,.15);border-radius:7px;padding:10px 12px}
+.err-item .err-top{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+.err-item .err-time{font-size:.7rem;color:var(--red);font-weight:600}
+.err-item .err-file{font-size:.75rem;color:#f1f5f9;font-weight:500}
+.err-item .err-msg{font-size:.72rem;color:var(--muted)}
+/* ─── empty state ───────────────────────────────────────────────── */
+.empty{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px;color:var(--muted);gap:8px;font-size:.8rem}
+.empty svg{opacity:.25}
+/* ─── donut chart ───────────────────────────────────────────────── */
+.donut-wrap{display:flex;align-items:center;gap:20px}
+.donut-legend{display:flex;flex-direction:column;gap:7px;flex:1}
+.leg-row{display:flex;align-items:center;gap:7px;font-size:.74rem;color:var(--muted)}
+.leg-dot{width:8px;height:8px;border-radius:2px;flex-shrink:0}
+.leg-val{margin-left:auto;color:#f1f5f9;font-weight:500;font-variant-numeric:tabular-nums}
+/* ─── tooltips ──────────────────────────────────────────────────── */
+[title]{cursor:default}
 </style>
 </head>
 <body>
 
+<!-- ══ TOPBAR ═══════════════════════════════════════════════════════════════ -->
 <div class="topbar">
-  <h1>ESP32 BLE HID Lab</h1>
-  <span class="sub">Control Dashboard</span>
-  <span class="dot" id="dot"></span>
-  <span class="uptime" id="uptime">--:--:--</span>
+  <div class="logo">
+    <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+      <rect width="28" height="28" rx="7" fill="#1a2340"/>
+      <path d="M7 14h4l2-5 3 10 2-7 2 4h1" stroke="#4f8ef7" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="21" cy="8" r="2.5" fill="#22d47a"/>
+    </svg>
+    <div>
+      <div class="logo-text">ESP32 BLE HID Lab</div>
+      <div class="logo-sub">Media Exfiltration Dashboard</div>
+    </div>
+  </div>
+  <div class="topbar-nav" style="display:flex;gap:4px;margin-left:28px">
+    <a href="#" onclick="showPage('overview',this)">Overview</a>
+    <a href="#" onclick="showPage('history',this)" style="margin:0 2px">History</a>
+    <a href="#" onclick="showPage('devices',this)">Devices</a>
+    <a href="#" onclick="showPage('errors',this)">Errors</a>
+  </div>
+  <div class="topbar-right">
+    <div class="status-pill">
+      <span class="dot active" id="conn-dot"></span>
+      <span id="conn-label">Connected</span>
+    </div>
+    <div class="uptime-badge">⏱ <span id="uptime">--:--:--</span></div>
+    <div style="display:flex;gap:6px">
+      <a href="/files" style="font-size:.75rem;padding:5px 11px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--muted)">Gallery</a>
+      <a href="/report" style="font-size:.75rem;padding:5px 11px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--muted)">Report</a>
+    </div>
+  </div>
 </div>
 
-<div class="wrap">
+<!-- ══ BODY ══════════════════════════════════════════════════════════════════ -->
+<div class="app-body">
 
-  <!-- ── 1. Server Status ───────────────────────────── -->
-  <div class="card">
-    <h2>Server Status</h2>
-    <div class="stats">
-      <div class="stat ok">
-        <div class="val" id="s-files">—</div>
-        <div class="lbl">Total Files</div>
+<!-- ── SIDEBAR ─────────────────────────────────────────────────────────────── -->
+<nav class="sidebar">
+  <div class="sidebar-section">
+    <div class="sidebar-label">Monitor</div>
+    <div class="nav-item active" onclick="showPage('overview',this)" id="nav-overview">
+      <svg class="icon" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2h5v5H2zm7 0h5v5H9zM2 9h5v5H2zm7 0h5v5H9z"/></svg>
+      Overview
+    </div>
+    <div class="nav-item" onclick="showPage('history',this)" id="nav-history">
+      <svg class="icon" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zM7 4h2v5H7zm0 6h2v2H7z"/></svg>
+      Backup History
+      <span class="nav-badge" id="nb-hist">0</span>
+    </div>
+    <div class="nav-item" onclick="showPage('storage',this)" id="nav-storage">
+      <svg class="icon" viewBox="0 0 16 16" fill="currentColor"><path d="M2 3h12a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zm0 6h12a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1z"/></svg>
+      Storage
+    </div>
+    <div class="nav-item" onclick="showPage('devices',this)" id="nav-devices">
+      <svg class="icon" viewBox="0 0 16 16" fill="currentColor"><path d="M11 2a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h6zm-2 9a1 1 0 1 0-2 0 1 1 0 0 0 2 0z"/></svg>
+      Devices
+      <span class="nav-badge" id="nb-dev">0</span>
+    </div>
+  </div>
+  <hr class="sidebar-divider">
+  <div class="sidebar-section">
+    <div class="sidebar-label">Alerts</div>
+    <div class="nav-item" onclick="showPage('errors',this)" id="nav-errors">
+      <svg class="icon" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1L0 15h16L8 1zm1 10H7V9h2v2zm0-4H7V5h2v2z"/></svg>
+      Errors
+      <span class="nav-badge red" id="nb-err">0</span>
+    </div>
+  </div>
+</nav>
+
+<!-- ── MAIN ─────────────────────────────────────────────────────────────────── -->
+<main class="main">
+
+  <!-- ════ OVERVIEW ════════════════════════════════════════════════════════ -->
+  <div class="page active" id="page-overview">
+    <div class="section-header">
+      <div>
+        <div class="section-title">Overview</div>
+        <div class="section-sub">Live server metrics — auto-refreshes every 3 s</div>
       </div>
-      <div class="stat">
-        <div class="val" id="s-mb">—</div>
-        <div class="lbl">Total MB</div>
-      </div>
-      <div class="stat">
-        <div class="val" id="s-hashes">—</div>
-        <div class="lbl">Unique Hashes</div>
-      </div>
-      <div class="stat" id="s-err-card">
-        <div class="val" id="s-errors">—</div>
-        <div class="lbl">Errors</div>
+      <div class="refresh-tag">
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><circle cx="5" cy="5" r="4" stroke="#4b5680" stroke-width="1.5"/><path d="M5 2v3l2 1" stroke="#4b5680" stroke-width="1.2" stroke-linecap="round"/></svg>
+        Live
       </div>
     </div>
-    <div class="nav">
-      <a href="/files">Gallery</a>
-      <a href="/report">JSON Report</a>
-      <a href="/health">Health</a>
+
+    <!-- KPIs -->
+    <div class="kpi-grid">
+      <div class="kpi blue">
+        <div class="kpi-label">Total Files</div>
+        <div class="kpi-val" id="k-files">—</div>
+        <div class="kpi-sub">received this session</div>
+        <div class="kpi-icon">📁</div>
+      </div>
+      <div class="kpi green">
+        <div class="kpi-label">Storage Used</div>
+        <div class="kpi-val" id="k-mb">—</div>
+        <div class="kpi-sub">MB across all categories</div>
+        <div class="kpi-icon">💾</div>
+      </div>
+      <div class="kpi amber">
+        <div class="kpi-label">Upload Speed</div>
+        <div class="kpi-val" id="k-speed">0</div>
+        <div class="kpi-sub">KB/s · last 10 seconds</div>
+        <div class="kpi-icon">⚡</div>
+      </div>
+      <div class="kpi" id="k-err-kpi">
+        <div class="kpi-label">Errors</div>
+        <div class="kpi-val" id="k-errors">0</div>
+        <div class="kpi-sub">total upload failures</div>
+        <div class="kpi-icon">⚠</div>
+      </div>
+    </div>
+
+    <!-- Speed + Donut row -->
+    <div class="row2">
+      <!-- speed card -->
+      <div class="card">
+        <div class="card-title">Upload Speed</div>
+        <div class="speed-num" id="sp-num">0 <span style="font-size:1rem;color:var(--muted)">KB/s</span></div>
+        <div class="speed-unit">Average over last 10 seconds</div>
+        <div id="sp-status" class="speed-status idle">Idle</div>
+        <div class="sparkline" id="sparkline-wrap">
+          <svg id="sparkline-svg" height="52" viewBox="0 0 400 52" preserveAspectRatio="none">
+            <path id="spark-path" d="" fill="none" stroke="#4f8ef7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            <path id="spark-fill" d="" fill="url(#spark-grad)" opacity=".25"/>
+            <defs>
+              <linearGradient id="spark-grad" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="#4f8ef7"/>
+                <stop offset="100%" stop-color="#4f8ef7" stop-opacity="0"/>
+              </linearGradient>
+            </defs>
+          </svg>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:.68rem;color:var(--muted);margin-top:2px">
+          <span>60 s ago</span><span>now</span>
+        </div>
+      </div>
+
+      <!-- storage donut -->
+      <div class="card">
+        <div class="card-title">Storage by Category</div>
+        <div class="donut-wrap">
+          <svg id="donut-svg" width="100" height="100" viewBox="0 0 36 36">
+            <circle cx="18" cy="18" r="15.9" fill="none" stroke="var(--surface2)" stroke-width="4"/>
+            <g id="donut-arcs"></g>
+            <text x="18" y="19" text-anchor="middle" font-size="5" fill="#f1f5f9" font-weight="600" id="donut-center">0 MB</text>
+          </svg>
+          <div class="donut-legend" id="donut-legend"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Category bars -->
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-title">Category Breakdown</div>
+      <div id="cat-progs"></div>
+    </div>
+
+    <!-- Mini history -->
+    <div class="card">
+      <div class="card-title" style="justify-content:space-between">
+        <span>Recent Uploads</span>
+        <a href="#" onclick="showPage('history')" style="font-size:.72rem">View all →</a>
+      </div>
+      <div class="table-wrap" style="max-height:200px">
+        <table>
+          <thead><tr><th>Time</th><th>File</th><th>Category</th><th>Size</th><th>Status</th></tr></thead>
+          <tbody id="mini-hist"></tbody>
+        </table>
+      </div>
     </div>
   </div>
 
-  <!-- ── 2. Upload Speed ────────────────────────────── -->
-  <div class="card">
-    <h2>Upload Speed</h2>
-    <div class="stat ok" style="margin-bottom:12px">
-      <div class="val" id="s-speed">0</div>
-      <div class="lbl">KB/s (last 10 s)</div>
+  <!-- ════ HISTORY ═════════════════════════════════════════════════════════ -->
+  <div class="page" id="page-history">
+    <div class="section-header">
+      <div><div class="section-title">Backup History</div><div class="section-sub">All upload events this session (last 200)</div></div>
     </div>
-    <div class="speed-wrap">
-      <div class="speed-bar" id="speed-bar" style="width:0%"></div>
-      <div class="speed-lbl" id="speed-lbl">Idle</div>
-    </div>
-    <div style="margin-top:16px">
-      <div id="speed-history" style="display:flex;gap:3px;align-items:flex-end;height:40px"></div>
-      <div style="font-size:.7rem;color:#64748b;margin-top:4px">Speed sparkline (last 20 polls)</div>
-    </div>
-  </div>
-
-  <!-- ── 3. Storage Utilization ────────────────────── -->
-  <div class="card">
-    <h2>Storage Utilization</h2>
-    <div id="cat-bars"></div>
-  </div>
-
-  <!-- ── 4. Connected Devices ──────────────────────── -->
-  <div class="card">
-    <h2>Connected Devices</h2>
-    <div id="dev-list"><p class="no-data">No uploads received yet.</p></div>
-  </div>
-
-  <!-- ── 5. Upload History ──────────────────────────── -->
-  <div class="card" style="grid-column:span 2">
-    <h2>Backup History <span id="hist-count" style="color:#64748b;font-weight:400"></span></h2>
-    <div class="htable-wrap">
-      <table>
-        <thead><tr>
-          <th>Time</th><th>File</th><th>Category</th><th>Size (KB)</th><th>IP</th><th>Status</th>
-        </tr></thead>
-        <tbody id="hist-body"><tr><td colspan="6" style="text-align:center;color:#64748b;padding:16px">No uploads yet.</td></tr></tbody>
-      </table>
+    <div class="card">
+      <div class="card-title" style="justify-content:space-between">
+        <span>Upload Log</span>
+        <span id="hist-total" style="color:var(--muted);font-size:.72rem;text-transform:none;letter-spacing:0"></span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Time</th><th>Filename</th><th>Category</th><th>Size (KB)</th><th>IP Address</th><th>SHA-256</th><th>Status</th></tr></thead>
+          <tbody id="hist-body"></tbody>
+        </table>
+      </div>
     </div>
   </div>
 
-  <!-- ── 6. Error Monitoring ───────────────────────── -->
-  <div class="card">
-    <h2>Error Monitoring <span id="err-badge" style="color:#f87171;font-weight:400"></span></h2>
-    <div class="err-list" id="err-list"><p class="no-data">No errors.</p></div>
+  <!-- ════ STORAGE ═════════════════════════════════════════════════════════ -->
+  <div class="page" id="page-storage">
+    <div class="section-header">
+      <div><div class="section-title">Storage Utilization</div><div class="section-sub">Files stored on disk by category</div></div>
+    </div>
+    <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr)">
+      <div class="kpi blue"><div class="kpi-label">Total Files</div><div class="kpi-val" id="st-files">—</div></div>
+      <div class="kpi green"><div class="kpi-label">Total Size</div><div class="kpi-val" id="st-mb">—</div><div class="kpi-sub">MB</div></div>
+      <div class="kpi amber"><div class="kpi-label">Unique Hashes</div><div class="kpi-val" id="st-hashes">—</div></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Disk Usage per Category</div>
+      <div id="st-bars"></div>
+    </div>
   </div>
 
-</div>
+  <!-- ════ DEVICES ═════════════════════════════════════════════════════════ -->
+  <div class="page" id="page-devices">
+    <div class="section-header">
+      <div><div class="section-title">Connected Devices</div><div class="section-sub">Devices that have uploaded files this session</div></div>
+    </div>
+    <div id="dev-grid" class="dev-grid">
+      <div class="empty"><svg width="40" height="40" viewBox="0 0 40 40" fill="none"><rect x="8" y="6" width="24" height="28" rx="3" stroke="#4b5680" stroke-width="1.5"/><circle cx="20" cy="30" r="1.5" fill="#4b5680"/></svg>No uploads yet.</div>
+    </div>
+  </div>
+
+  <!-- ════ ERRORS ══════════════════════════════════════════════════════════ -->
+  <div class="page" id="page-errors">
+    <div class="section-header">
+      <div><div class="section-title">Error Monitoring</div><div class="section-sub">Failed upload events</div></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Error Feed <span id="err-count-label" style="color:var(--red);font-weight:400;text-transform:none;letter-spacing:0"></span></div>
+      <div class="err-feed" id="err-feed">
+        <div class="empty" style="padding:24px">
+          <svg width="36" height="36" viewBox="0 0 36 36" fill="none"><path d="M18 4L2 32h32L18 4z" stroke="#4b5680" stroke-width="1.5"/><path d="M18 14v8M18 26v2" stroke="#4b5680" stroke-width="1.5" stroke-linecap="round"/></svg>
+          No errors recorded.
+        </div>
+      </div>
+    </div>
+  </div>
+
+</main>
+</div><!-- /.app-body -->
 
 <script>
-const CAT_COLORS = {DCIM:'#3b82f6',Pictures:'#8b5cf6',Screenshots:'#06b6d4',Movies:'#f59e0b',Downloads:'#10b981',Other:'#64748b'};
-let _speedHistory = [];
-let _maxSpeed = 1;
+// ── constants ────────────────────────────────────────────────────────────────
+const CAT_COL = {DCIM:'#4f8ef7',Pictures:'#9f7aea',Screenshots:'#22d3ee',Movies:'#f5a623',Downloads:'#22d47a',Other:'#64748b'};
+const DONUT_R = 15.9, DONUT_CIRC = 2 * Math.PI * DONUT_R;
 
+// ── state ────────────────────────────────────────────────────────────────────
+let _sp = [], _maxSp = 1, _activePage = 'overview', _lastData = null;
+
+// ── page routing ─────────────────────────────────────────────────────────────
+function showPage(id, el) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.querySelectorAll('.topbar-nav a').forEach(a => a.style.fontWeight = '');
+  document.getElementById('page-' + id).classList.add('active');
+  const ni = document.getElementById('nav-' + id);
+  if (ni) ni.classList.add('active');
+  if (el && el.style !== undefined) el.style.fontWeight = '600';
+  _activePage = id;
+  return false;
+}
+
+// ── poll ─────────────────────────────────────────────────────────────────────
 async function poll() {
   try {
     const r = await fetch('/api/stats');
-    if (!r.ok) throw new Error(r.status);
-    const d = await r.json();
-    update(d);
-    document.getElementById('dot').style.background = '#22c55e';
-  } catch(e) {
-    document.getElementById('dot').style.background = '#f87171';
+    if (!r.ok) throw 0;
+    _lastData = await r.json();
+    render(_lastData);
+    setConn(true);
+  } catch {
+    setConn(false);
   }
 }
 
-function fmt(n){ return n >= 1000 ? (n/1000).toFixed(1)+'G' : n >= 100 ? n+'' : n+''; }
+function setConn(ok) {
+  const dot = document.getElementById('conn-dot');
+  const lbl = document.getElementById('conn-label');
+  dot.className = 'dot' + (ok ? ' active' : ' red');
+  lbl.textContent = ok ? 'Connected' : 'Offline';
+  dot.style.background = ok ? 'var(--green)' : 'var(--red)';
+}
 
-function update(d) {
-  // ── top bar
+// ── render ───────────────────────────────────────────────────────────────────
+function render(d) {
   document.getElementById('uptime').textContent = d.uptime;
 
-  // ── server status
-  document.getElementById('s-files').textContent   = d.total_files;
-  document.getElementById('s-mb').textContent      = d.total_mb;
-  document.getElementById('s-hashes').textContent  = d.known_hashes;
-  document.getElementById('s-errors').textContent  = d.error_count;
-  const ec = document.getElementById('s-err-card');
-  ec.className = 'stat ' + (d.error_count > 0 ? 'err' : 'ok');
+  // badges
+  document.getElementById('nb-hist').textContent = d.history ? d.history.length : 0;
+  document.getElementById('nb-dev').textContent  = d.devices ? d.devices.length : 0;
+  const ec = (d.history||[]).filter(h=>!h.ok).length;
+  document.getElementById('nb-err').textContent = ec;
 
-  // ── speed
+  // ── KPIs
+  document.getElementById('k-files').textContent  = d.total_files;
+  document.getElementById('k-mb').textContent     = d.total_mb;
+  document.getElementById('k-speed').textContent  = d.speed_kbps;
+  document.getElementById('k-errors').textContent = d.error_count;
+  const ekpi = document.getElementById('k-err-kpi');
+  ekpi.className = 'kpi ' + (d.error_count > 0 ? 'red' : 'green');
+
+  // ── speed panel
   const sp = d.speed_kbps;
-  document.getElementById('s-speed').textContent = sp;
-  _maxSpeed = Math.max(_maxSpeed, sp, 1);
-  const pct = Math.min(100, (sp / _maxSpeed) * 100);
-  document.getElementById('speed-bar').style.width = pct + '%';
-  document.getElementById('speed-bar').style.background = sp > 500 ? '#22c55e' : sp > 100 ? '#f59e0b' : '#3b82f6';
-  document.getElementById('speed-lbl').textContent = sp > 0 ? sp + ' KB/s uploading' : 'Idle';
+  document.getElementById('sp-num').innerHTML = sp + ' <span style="font-size:1rem;color:var(--muted)">KB/s</span>';
+  const ss = document.getElementById('sp-status');
+  if (sp > 0) { ss.className='speed-status active'; ss.textContent='● Uploading'; }
+  else { ss.className='speed-status idle'; ss.textContent='Idle'; }
+  _sp.push(sp); if (_sp.length > 40) _sp.shift();
+  _maxSp = Math.max(..._sp, 1);
+  renderSparkline();
 
-  // sparkline
-  _speedHistory.push(sp);
-  if (_speedHistory.length > 20) _speedHistory.shift();
-  const maxS = Math.max(..._speedHistory, 1);
-  const sh = document.getElementById('speed-history');
-  sh.innerHTML = _speedHistory.map(v => {
-    const h = Math.max(2, Math.round((v / maxS) * 38));
-    const c = v > 500 ? '#22c55e' : v > 100 ? '#f59e0b' : '#3b82f6';
-    return '<div style="width:8px;height:'+h+'px;background:'+c+';border-radius:2px;flex-shrink:0"></div>';
-  }).join('');
+  // ── donut
+  renderDonut(d.categories);
 
-  // ── storage / category bars
-  const cats = d.categories;
-  const maxCat = Math.max(...Object.values(cats).map(c => c.size_mb), 1);
-  document.getElementById('cat-bars').innerHTML = Object.entries(cats).map(([name, c]) => {
-    const pct = Math.min(100, (c.size_mb / maxCat) * 100);
-    const col = CAT_COLORS[name] || '#64748b';
-    return '<div class="cat-row">' +
-      '<span class="cat-name">' + name + '</span>' +
-      '<div class="cat-bar-wrap"><div class="cat-bar" style="width:' + pct + '%;background:' + col + '"></div></div>' +
-      '<span class="cat-count">' + c.count + ' / ' + c.size_mb + ' MB</span>' +
+  // ── category bars (overview)
+  renderCatBars('cat-progs', d.categories, false);
+
+  // ── mini history
+  renderMiniHist(d.history || []);
+
+  // ── full history page
+  renderFullHist(d.history || []);
+
+  // ── storage page
+  document.getElementById('st-files').textContent  = d.total_files;
+  document.getElementById('st-mb').textContent     = d.total_mb;
+  document.getElementById('st-hashes').textContent = d.known_hashes;
+  renderCatBars('st-bars', d.categories, true);
+
+  // ── devices page
+  renderDevices(d.devices || []);
+
+  // ── errors page
+  renderErrors((d.history||[]).filter(h=>!h.ok));
+}
+
+// ── sparkline ────────────────────────────────────────────────────────────────
+function renderSparkline() {
+  const W = 400, H = 48;
+  const pts = _sp;
+  if (pts.length < 2) return;
+  const step = W / (pts.length - 1);
+  const coords = pts.map((v, i) => [i * step, H - 4 - (v / _maxSp) * (H - 8)]);
+  const line = coords.map((p, i) => (i === 0 ? 'M' : 'L') + p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' ');
+  const fill = line + ' L' + coords[coords.length-1][0].toFixed(1) + ' ' + H + ' L0 ' + H + ' Z';
+  document.getElementById('spark-path').setAttribute('d', line);
+  document.getElementById('spark-fill').setAttribute('d', fill);
+}
+
+// ── donut ─────────────────────────────────────────────────────────────────────
+function renderDonut(cats) {
+  const totalMb = Object.values(cats).reduce((s,c) => s + c.size_mb, 0);
+  document.getElementById('donut-center').textContent = totalMb.toFixed(1) + ' MB';
+  const arcsEl = document.getElementById('donut-arcs');
+  const legEl  = document.getElementById('donut-legend');
+  if (totalMb === 0) { arcsEl.innerHTML=''; legEl.innerHTML='<div style="font-size:.72rem;color:var(--muted)">No data yet</div>'; return; }
+  let offset = 0;
+  const svgNS = 'http://www.w3.org/2000/svg';
+  arcsEl.innerHTML = '';
+  legEl.innerHTML  = '';
+  Object.entries(cats).filter(([,c])=>c.size_mb>0).forEach(([name, c]) => {
+    const frac = c.size_mb / totalMb;
+    const dash = frac * DONUT_CIRC;
+    const gap  = DONUT_CIRC - dash;
+    const col  = CAT_COL[name] || '#64748b';
+    const circle = document.createElementNS(svgNS, 'circle');
+    circle.setAttribute('cx','18'); circle.setAttribute('cy','18');
+    circle.setAttribute('r', DONUT_R);
+    circle.setAttribute('fill','none');
+    circle.setAttribute('stroke', col);
+    circle.setAttribute('stroke-width','4');
+    circle.setAttribute('stroke-dasharray', dash.toFixed(2) + ' ' + gap.toFixed(2));
+    circle.setAttribute('stroke-dashoffset', (-offset * DONUT_CIRC).toFixed(2));
+    circle.setAttribute('transform','rotate(-90 18 18)');
+    arcsEl.appendChild(circle);
+    offset += frac;
+    legEl.innerHTML += '<div class="leg-row"><div class="leg-dot" style="background:'+col+'"></div>'+name+'<span class="leg-val">'+c.size_mb+' MB</span></div>';
+  });
+}
+
+// ── category progress bars ────────────────────────────────────────────────────
+function renderCatBars(elId, cats, showCount) {
+  const maxMb = Math.max(...Object.values(cats).map(c=>c.size_mb), 0.001);
+  const el = document.getElementById(elId);
+  el.innerHTML = Object.entries(cats).map(([name,c]) => {
+    const pct = Math.min(100, (c.size_mb / maxMb) * 100);
+    const col = CAT_COL[name] || '#64748b';
+    const meta = showCount ? c.count + ' files · ' + c.size_mb + ' MB' : c.count + ' files';
+    return '<div class="prog-row">' +
+      '<span class="prog-label">'+name+'</span>' +
+      '<div class="prog-track"><div class="prog-fill" style="width:'+pct+'%;background:'+col+'"></div></div>' +
+      '<span class="prog-meta">'+meta+'</span>' +
     '</div>';
   }).join('');
+}
 
-  // ── devices
-  const devEl = document.getElementById('dev-list');
-  if (!d.devices || d.devices.length === 0) {
-    devEl.innerHTML = '<p class="no-data">No uploads received yet.</p>';
-  } else {
-    devEl.innerHTML = d.devices.map(dv => {
-      const mb = (dv.bytes / 1_048_576).toFixed(1);
-      return '<div class="dev-row">' +
-        '<span class="dev-ip">' + dv.ip + '</span>' +
-        '<span class="dev-badge">' + dv.files + ' files</span>' +
-        '<span class="dev-meta">' + mb + ' MB · ' + (dv.errors > 0 ? '<span style="color:#f87171">'+dv.errors+' err</span>' : '0 err') + '</span>' +
-        '<span class="dev-meta" style="margin-left:auto;font-size:.7rem">' + (dv.last_seen||'').slice(11,19) + '</span>' +
-      '</div>';
-    }).join('');
-  }
+// ── mini history ──────────────────────────────────────────────────────────────
+function renderMiniHist(hist) {
+  const el = document.getElementById('mini-hist');
+  if (!hist.length) { el.innerHTML='<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:20px">No uploads yet.</td></tr>'; return; }
+  el.innerHTML = hist.slice(0,10).map(h =>
+    '<tr><td>'+h.ts+'</td>' +
+    '<td title="'+h.filename+'">'+h.filename.slice(0,24)+(h.filename.length>24?'…':'')+'</td>' +
+    '<td><span class="badge cat">'+h.category+'</span></td>' +
+    '<td>'+h.size_kb+' KB</td>' +
+    '<td><span class="badge '+(h.ok?'ok':'fail')+'">'+(h.ok?'OK':'FAIL')+'</span></td></tr>'
+  ).join('');
+}
 
-  // ── history table
-  const hist = d.history || [];
-  document.getElementById('hist-count').textContent = hist.length ? '(' + hist.length + ')' : '';
-  const tbody = document.getElementById('hist-body');
-  if (hist.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#64748b;padding:16px">No uploads yet.</td></tr>';
-  } else {
-    tbody.innerHTML = hist.map(h => {
-      const st = h.ok ? '<td class="ok">OK</td>' : '<td class="fail">FAIL</td>';
-      return '<tr><td>'+h.ts+'</td><td title="'+h.filename+'">'+h.filename.slice(0,28)+(h.filename.length>28?'…':'')+'</td><td>'+h.category+'</td><td>'+h.size_kb+'</td><td>'+h.ip+'</td>'+st+'</tr>';
-    }).join('');
-  }
+// ── full history ───────────────────────────────────────────────────────────────
+function renderFullHist(hist) {
+  document.getElementById('hist-total').textContent = hist.length + ' records';
+  const el = document.getElementById('hist-body');
+  if (!hist.length) { el.innerHTML='<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:24px">No uploads yet.</td></tr>'; return; }
+  el.innerHTML = hist.map(h =>
+    '<tr><td>'+h.ts+'</td>' +
+    '<td title="'+h.filename+'">'+h.filename.slice(0,32)+(h.filename.length>32?'…':'')+'</td>' +
+    '<td><span class="badge cat">'+h.category+'</span></td>' +
+    '<td>'+h.size_kb+'</td>' +
+    '<td style="font-family:monospace;font-size:.7rem">'+h.ip+'</td>' +
+    '<td style="font-family:monospace;font-size:.65rem;color:var(--muted)">'+h.sha256_prefix+'</td>' +
+    '<td><span class="badge '+(h.ok?'ok':'fail')+'">'+(h.ok?'OK':'FAIL')+'</span></td></tr>'
+  ).join('');
+}
 
-  // ── errors
-  const errors = (d.history || []).filter(h => !h.ok);
-  const errBadge = document.getElementById('err-badge');
-  errBadge.textContent = errors.length ? '(' + errors.length + ')' : '';
-  const errEl = document.getElementById('err-list');
-  if (errors.length === 0) {
-    errEl.innerHTML = '<p class="no-data">No errors.</p>';
-  } else {
-    errEl.innerHTML = errors.map(e =>
-      '<div class="err-item">' +
-        '<span class="et">' + e.ts + '</span> ' +
-        '<span class="ef">' + e.filename + '</span> ' +
-        '<span class="em">' + (e.error || 'unknown error') + '</span>' +
-      '</div>'
-    ).join('');
+// ── devices ────────────────────────────────────────────────────────────────────
+function renderDevices(devs) {
+  const el = document.getElementById('dev-grid');
+  if (!devs.length) {
+    el.innerHTML = '<div class="empty"><svg width="40" height="40" viewBox="0 0 40 40" fill="none"><rect x="8" y="6" width="24" height="28" rx="3" stroke="#4b5680" stroke-width="1.5"/><circle cx="20" cy="30" r="1.5" fill="#4b5680"/></svg>No uploads yet.</div>';
+    return;
   }
+  el.innerHTML = devs.map(dv => {
+    const mb = (dv.bytes/1048576).toFixed(2);
+    return '<div class="dev-card">' +
+      '<div class="dev-ip">'+dv.ip+'</div>' +
+      '<div class="dev-stat-row"><span class="dk">Files</span><span class="dv">'+dv.files+'</span></div>' +
+      '<div class="dev-stat-row"><span class="dk">Data</span><span class="dv">'+mb+' MB</span></div>' +
+      '<div class="dev-stat-row"><span class="dk">Errors</span><span class="dv" style="color:'+(dv.errors>0?'var(--red)':'inherit')+'">'+dv.errors+'</span></div>' +
+      '<div class="dev-stat-row"><span class="dk">First seen</span><span class="dv">'+dv.first_seen.slice(11,19)+'</span></div>' +
+      '<div class="dev-stat-row"><span class="dk">Last seen</span><span class="dv">'+dv.last_seen.slice(11,19)+'</span></div>' +
+    '</div>';
+  }).join('');
+}
+
+// ── errors ─────────────────────────────────────────────────────────────────────
+function renderErrors(errs) {
+  document.getElementById('err-count-label').textContent = errs.length ? '(' + errs.length + ' failures)' : '';
+  const el = document.getElementById('err-feed');
+  if (!errs.length) {
+    el.innerHTML = '<div class="empty" style="padding:24px"><svg width="36" height="36" viewBox="0 0 36 36" fill="none"><path d="M18 4L2 32h32L18 4z" stroke="#4b5680" stroke-width="1.5"/><path d="M18 14v8M18 26v2" stroke="#4b5680" stroke-width="1.5" stroke-linecap="round"/></svg>No errors recorded.</div>';
+    return;
+  }
+  el.innerHTML = errs.map(e =>
+    '<div class="err-item">' +
+      '<div class="err-top"><span class="err-time">'+e.ts+'</span><span class="err-file">'+e.filename+'</span></div>' +
+      '<div class="err-msg">'+(e.error||'Unknown error')+'</div>' +
+    '</div>'
+  ).join('');
 }
 
 poll();
