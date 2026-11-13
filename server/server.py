@@ -36,6 +36,8 @@ Configuration (environment variables or .env file):
 
 API endpoints:
   GET  /health              Liveness probe — returns {"status":"ok"}
+  GET  /dashboard           Web control dashboard (all 6 panels)
+  GET  /api/stats           Live JSON stats for dashboard polling
   POST /upload              Receive a media file from the Android client
   GET  /files               HTML gallery + file listing
   GET  /download/<file_id>  Download a specific file by its stored name
@@ -50,11 +52,13 @@ import csv
 import json
 import uuid
 import hmac
+import time
 import hashlib
 import logging
 import urllib.request
 from pathlib import Path
 from datetime import datetime
+from collections import deque
 from functools import wraps
 
 from flask import (
@@ -133,6 +137,63 @@ app.config["MAX_CONTENT_LENGTH"] = (MAX_FILE_MB + 10) * 1024 * 1024
 # Populated at startup from the manifest file, updated on every upload.
 
 _sha_index: dict[str, str] = {}
+
+# ── Live telemetry ─────────────────────────────────────────────────────────────
+# Lightweight in-process stats used by /api/stats — no DB required.
+
+_server_start   = time.time()
+
+# Upload history ring buffer — last 200 events
+# Each entry: {ts, filename, category, size_bytes, ok, error}
+_upload_events: deque = deque(maxlen=200)
+
+# Per-session speed tracking: bytes uploaded in the last 60 s (sliding window)
+# Each entry: (timestamp_float, bytes_int)
+_speed_window: deque = deque(maxlen=2000)
+
+# Error counter
+_error_count: int = 0
+
+# Connected device tracking: ip → {first_seen, last_seen, files, bytes, errors}
+_devices: dict = {}
+
+def _record_upload(filename, category, size_bytes, ok, error="", remote_ip=""):
+    """Record one upload event into the telemetry buffers."""
+    global _error_count
+    now = time.time()
+    _upload_events.appendleft({
+        "ts":         datetime.fromtimestamp(now).strftime("%H:%M:%S"),
+        "ts_epoch":   now,
+        "filename":   filename,
+        "category":   category,
+        "size_bytes": size_bytes,
+        "size_kb":    size_bytes // 1024,
+        "ok":         ok,
+        "error":      error,
+        "ip":         remote_ip,
+    })
+    if ok:
+        _speed_window.append((now, size_bytes))
+    else:
+        _error_count += 1
+    # Update device record
+    if remote_ip:
+        d = _devices.setdefault(remote_ip, {
+            "ip": remote_ip, "first_seen": datetime.fromtimestamp(now).isoformat(),
+            "files": 0, "bytes": 0, "errors": 0, "last_seen": "",
+        })
+        d["last_seen"] = datetime.fromtimestamp(now).isoformat()
+        if ok:
+            d["files"] += 1
+            d["bytes"] += size_bytes
+        else:
+            d["errors"] += 1
+
+def _current_speed_kbps() -> float:
+    """Bytes uploaded in the last 10 s → KB/s."""
+    cutoff = time.time() - 10
+    total  = sum(b for ts, b in _speed_window if ts >= cutoff)
+    return round(total / 1024 / 10, 1)
 
 def _load_manifest():
     """Load SHA-256 → filename index from the manifest file."""
@@ -333,6 +394,9 @@ def upload():
     log.info("OK  %s  →  %s/%s  (%d KB)",
              f.filename, subdir, stored_name, size_bytes // 1024)
 
+    _record_upload(safe_name, subdir, size_bytes, ok=True,
+                   remote_ip=request.remote_addr)
+
     return jsonify({
         "ok":       True,
         "saved":    stored_name,
@@ -442,6 +506,47 @@ def report():
     return jsonify(result), 200
 
 
+# GET /api/stats ──────────────────────────────────────────────────────────────
+@app.route("/api/stats", methods=["GET"])
+def api_stats():
+    """Live JSON stats polled by the dashboard every 3 s."""
+    # Storage utilization
+    total_bytes = 0
+    cat_stats   = {}
+    for subdir in CATEGORY_DIRS.values():
+        d = BACKUP_DIR / subdir
+        if not d.exists():
+            cat_stats[subdir] = {"count": 0, "size_mb": 0}
+            continue
+        files = [p for p in d.iterdir() if p.is_file()]
+        sb    = sum(p.stat().st_size for p in files)
+        total_bytes += sb
+        cat_stats[subdir] = {"count": len(files), "size_mb": round(sb / 1_048_576, 2)}
+
+    uptime_s = int(time.time() - _server_start)
+    h, rem   = divmod(uptime_s, 3600)
+    m, s     = divmod(rem, 60)
+
+    return jsonify({
+        "uptime":       f"{h:02d}:{m:02d}:{s:02d}",
+        "total_files":  sum(v["count"] for v in cat_stats.values()),
+        "total_mb":     round(total_bytes / 1_048_576, 2),
+        "speed_kbps":   _current_speed_kbps(),
+        "error_count":  _error_count,
+        "known_hashes": len(_sha_index),
+        "categories":   cat_stats,
+        "devices":      list(_devices.values()),
+        "history":      list(_upload_events)[:50],   # last 50 for the table
+    }), 200
+
+
+# GET /dashboard ──────────────────────────────────────────────────────────────
+@app.route("/dashboard", methods=["GET"])
+def dashboard():
+    """Full web control dashboard."""
+    return render_template_string(DASHBOARD_HTML)
+
+
 # GET /payloads/<filename> ────────────────────────────────────────────────────
 @app.route("/payloads/<filename>", methods=["GET"])
 def serve_payload(filename):
@@ -452,6 +557,281 @@ def serve_payload(filename):
     log.info("Payload request: %s", filename)
     return send_from_directory(str(PAYLOAD_DIR), filename, as_attachment=False)
 
+
+# ── Dashboard HTML ────────────────────────────────────────────────────────────
+
+DASHBOARD_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ESP32 Lab — Dashboard</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,"Segoe UI",system-ui,sans-serif;background:#0f1117;color:#e2e8f0;min-height:100vh}
+a{color:#60a5fa;text-decoration:none}
+/* ── top bar ── */
+.topbar{display:flex;align-items:center;gap:12px;padding:14px 24px;background:#1a1d27;border-bottom:1px solid #2d3148}
+.topbar h1{font-size:1rem;font-weight:600;letter-spacing:.03em;color:#f1f5f9}
+.topbar .sub{font-size:.75rem;color:#64748b;margin-left:4px}
+.dot{width:8px;height:8px;border-radius:50%;background:#22c55e;margin-left:auto;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.uptime{font-size:.75rem;color:#64748b}
+/* ── layout ── */
+.wrap{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px;padding:20px 24px}
+.card{background:#1a1d27;border:1px solid #2d3148;border-radius:10px;padding:18px}
+.card h2{font-size:.8rem;font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:.06em;margin-bottom:14px}
+/* ── stat row ── */
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:0}
+.stat{background:#0f1117;border-radius:8px;padding:12px 14px}
+.stat .val{font-size:1.6rem;font-weight:700;color:#f1f5f9;line-height:1}
+.stat .lbl{font-size:.72rem;color:#64748b;margin-top:4px}
+.stat.ok .val{color:#22c55e}
+.stat.warn .val{color:#f59e0b}
+.stat.err .val{color:#f87171}
+/* ── speed bar ── */
+.speed-wrap{margin-top:4px}
+.speed-bar{height:6px;border-radius:3px;background:#22c55e;transition:width .5s ease;max-width:100%}
+.speed-lbl{font-size:.72rem;color:#64748b;margin-top:4px}
+/* ── category bars ── */
+.cat-row{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.cat-name{font-size:.78rem;color:#94a3b8;width:90px;flex-shrink:0}
+.cat-bar-wrap{flex:1;background:#0f1117;border-radius:3px;height:8px;overflow:hidden}
+.cat-bar{height:8px;border-radius:3px;background:#3b82f6;transition:width .4s ease}
+.cat-count{font-size:.72rem;color:#64748b;width:48px;text-align:right;flex-shrink:0}
+/* ── history table ── */
+.htable-wrap{overflow-x:auto;max-height:260px;overflow-y:auto}
+table{width:100%;border-collapse:collapse;font-size:.75rem}
+th{color:#64748b;text-align:left;padding:4px 8px;border-bottom:1px solid #2d3148;position:sticky;top:0;background:#1a1d27;font-weight:500}
+td{padding:5px 8px;border-bottom:1px solid #1e2235;color:#cbd5e1;white-space:nowrap}
+td.ok{color:#22c55e}
+td.fail{color:#f87171}
+tr:hover td{background:#20243a}
+/* ── device list ── */
+.dev-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #1e2235}
+.dev-row:last-child{border-bottom:none}
+.dev-ip{font-size:.8rem;color:#f1f5f9;font-weight:500;min-width:120px}
+.dev-meta{font-size:.72rem;color:#64748b}
+.dev-badge{background:#1e3a5f;color:#60a5fa;border-radius:12px;padding:2px 8px;font-size:.7rem}
+/* ── error log ── */
+.err-list{max-height:180px;overflow-y:auto}
+.err-item{padding:6px 0;border-bottom:1px solid #1e2235;font-size:.75rem}
+.err-item:last-child{border-bottom:none}
+.err-item .et{color:#f87171;font-weight:500}
+.err-item .ef{color:#94a3b8}
+.err-item .em{color:#64748b}
+.no-data{color:#64748b;font-size:.8rem;padding:12px 0;text-align:center}
+/* ── nav links ── */
+.nav{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+.nav a{font-size:.78rem;padding:5px 12px;border-radius:5px;background:#1e2235;color:#94a3b8;border:1px solid #2d3148;transition:background .15s}
+.nav a:hover{background:#2d3148;color:#f1f5f9}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>ESP32 BLE HID Lab</h1>
+  <span class="sub">Control Dashboard</span>
+  <span class="dot" id="dot"></span>
+  <span class="uptime" id="uptime">--:--:--</span>
+</div>
+
+<div class="wrap">
+
+  <!-- ── 1. Server Status ───────────────────────────── -->
+  <div class="card">
+    <h2>Server Status</h2>
+    <div class="stats">
+      <div class="stat ok">
+        <div class="val" id="s-files">—</div>
+        <div class="lbl">Total Files</div>
+      </div>
+      <div class="stat">
+        <div class="val" id="s-mb">—</div>
+        <div class="lbl">Total MB</div>
+      </div>
+      <div class="stat">
+        <div class="val" id="s-hashes">—</div>
+        <div class="lbl">Unique Hashes</div>
+      </div>
+      <div class="stat" id="s-err-card">
+        <div class="val" id="s-errors">—</div>
+        <div class="lbl">Errors</div>
+      </div>
+    </div>
+    <div class="nav">
+      <a href="/files">Gallery</a>
+      <a href="/report">JSON Report</a>
+      <a href="/health">Health</a>
+    </div>
+  </div>
+
+  <!-- ── 2. Upload Speed ────────────────────────────── -->
+  <div class="card">
+    <h2>Upload Speed</h2>
+    <div class="stat ok" style="margin-bottom:12px">
+      <div class="val" id="s-speed">0</div>
+      <div class="lbl">KB/s (last 10 s)</div>
+    </div>
+    <div class="speed-wrap">
+      <div class="speed-bar" id="speed-bar" style="width:0%"></div>
+      <div class="speed-lbl" id="speed-lbl">Idle</div>
+    </div>
+    <div style="margin-top:16px">
+      <div id="speed-history" style="display:flex;gap:3px;align-items:flex-end;height:40px"></div>
+      <div style="font-size:.7rem;color:#64748b;margin-top:4px">Speed sparkline (last 20 polls)</div>
+    </div>
+  </div>
+
+  <!-- ── 3. Storage Utilization ────────────────────── -->
+  <div class="card">
+    <h2>Storage Utilization</h2>
+    <div id="cat-bars"></div>
+  </div>
+
+  <!-- ── 4. Connected Devices ──────────────────────── -->
+  <div class="card">
+    <h2>Connected Devices</h2>
+    <div id="dev-list"><p class="no-data">No uploads received yet.</p></div>
+  </div>
+
+  <!-- ── 5. Upload History ──────────────────────────── -->
+  <div class="card" style="grid-column:span 2">
+    <h2>Backup History <span id="hist-count" style="color:#64748b;font-weight:400"></span></h2>
+    <div class="htable-wrap">
+      <table>
+        <thead><tr>
+          <th>Time</th><th>File</th><th>Category</th><th>Size (KB)</th><th>IP</th><th>Status</th>
+        </tr></thead>
+        <tbody id="hist-body"><tr><td colspan="6" style="text-align:center;color:#64748b;padding:16px">No uploads yet.</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ── 6. Error Monitoring ───────────────────────── -->
+  <div class="card">
+    <h2>Error Monitoring <span id="err-badge" style="color:#f87171;font-weight:400"></span></h2>
+    <div class="err-list" id="err-list"><p class="no-data">No errors.</p></div>
+  </div>
+
+</div>
+
+<script>
+const CAT_COLORS = {DCIM:'#3b82f6',Pictures:'#8b5cf6',Screenshots:'#06b6d4',Movies:'#f59e0b',Downloads:'#10b981',Other:'#64748b'};
+let _speedHistory = [];
+let _maxSpeed = 1;
+
+async function poll() {
+  try {
+    const r = await fetch('/api/stats');
+    if (!r.ok) throw new Error(r.status);
+    const d = await r.json();
+    update(d);
+    document.getElementById('dot').style.background = '#22c55e';
+  } catch(e) {
+    document.getElementById('dot').style.background = '#f87171';
+  }
+}
+
+function fmt(n){ return n >= 1000 ? (n/1000).toFixed(1)+'G' : n >= 100 ? n+'' : n+''; }
+
+function update(d) {
+  // ── top bar
+  document.getElementById('uptime').textContent = d.uptime;
+
+  // ── server status
+  document.getElementById('s-files').textContent   = d.total_files;
+  document.getElementById('s-mb').textContent      = d.total_mb;
+  document.getElementById('s-hashes').textContent  = d.known_hashes;
+  document.getElementById('s-errors').textContent  = d.error_count;
+  const ec = document.getElementById('s-err-card');
+  ec.className = 'stat ' + (d.error_count > 0 ? 'err' : 'ok');
+
+  // ── speed
+  const sp = d.speed_kbps;
+  document.getElementById('s-speed').textContent = sp;
+  _maxSpeed = Math.max(_maxSpeed, sp, 1);
+  const pct = Math.min(100, (sp / _maxSpeed) * 100);
+  document.getElementById('speed-bar').style.width = pct + '%';
+  document.getElementById('speed-bar').style.background = sp > 500 ? '#22c55e' : sp > 100 ? '#f59e0b' : '#3b82f6';
+  document.getElementById('speed-lbl').textContent = sp > 0 ? sp + ' KB/s uploading' : 'Idle';
+
+  // sparkline
+  _speedHistory.push(sp);
+  if (_speedHistory.length > 20) _speedHistory.shift();
+  const maxS = Math.max(..._speedHistory, 1);
+  const sh = document.getElementById('speed-history');
+  sh.innerHTML = _speedHistory.map(v => {
+    const h = Math.max(2, Math.round((v / maxS) * 38));
+    const c = v > 500 ? '#22c55e' : v > 100 ? '#f59e0b' : '#3b82f6';
+    return '<div style="width:8px;height:'+h+'px;background:'+c+';border-radius:2px;flex-shrink:0"></div>';
+  }).join('');
+
+  // ── storage / category bars
+  const cats = d.categories;
+  const maxCat = Math.max(...Object.values(cats).map(c => c.size_mb), 1);
+  document.getElementById('cat-bars').innerHTML = Object.entries(cats).map(([name, c]) => {
+    const pct = Math.min(100, (c.size_mb / maxCat) * 100);
+    const col = CAT_COLORS[name] || '#64748b';
+    return '<div class="cat-row">' +
+      '<span class="cat-name">' + name + '</span>' +
+      '<div class="cat-bar-wrap"><div class="cat-bar" style="width:' + pct + '%;background:' + col + '"></div></div>' +
+      '<span class="cat-count">' + c.count + ' / ' + c.size_mb + ' MB</span>' +
+    '</div>';
+  }).join('');
+
+  // ── devices
+  const devEl = document.getElementById('dev-list');
+  if (!d.devices || d.devices.length === 0) {
+    devEl.innerHTML = '<p class="no-data">No uploads received yet.</p>';
+  } else {
+    devEl.innerHTML = d.devices.map(dv => {
+      const mb = (dv.bytes / 1_048_576).toFixed(1);
+      return '<div class="dev-row">' +
+        '<span class="dev-ip">' + dv.ip + '</span>' +
+        '<span class="dev-badge">' + dv.files + ' files</span>' +
+        '<span class="dev-meta">' + mb + ' MB · ' + (dv.errors > 0 ? '<span style="color:#f87171">'+dv.errors+' err</span>' : '0 err') + '</span>' +
+        '<span class="dev-meta" style="margin-left:auto;font-size:.7rem">' + (dv.last_seen||'').slice(11,19) + '</span>' +
+      '</div>';
+    }).join('');
+  }
+
+  // ── history table
+  const hist = d.history || [];
+  document.getElementById('hist-count').textContent = hist.length ? '(' + hist.length + ')' : '';
+  const tbody = document.getElementById('hist-body');
+  if (hist.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#64748b;padding:16px">No uploads yet.</td></tr>';
+  } else {
+    tbody.innerHTML = hist.map(h => {
+      const st = h.ok ? '<td class="ok">OK</td>' : '<td class="fail">FAIL</td>';
+      return '<tr><td>'+h.ts+'</td><td title="'+h.filename+'">'+h.filename.slice(0,28)+(h.filename.length>28?'…':'')+'</td><td>'+h.category+'</td><td>'+h.size_kb+'</td><td>'+h.ip+'</td>'+st+'</tr>';
+    }).join('');
+  }
+
+  // ── errors
+  const errors = (d.history || []).filter(h => !h.ok);
+  const errBadge = document.getElementById('err-badge');
+  errBadge.textContent = errors.length ? '(' + errors.length + ')' : '';
+  const errEl = document.getElementById('err-list');
+  if (errors.length === 0) {
+    errEl.innerHTML = '<p class="no-data">No errors.</p>';
+  } else {
+    errEl.innerHTML = errors.map(e =>
+      '<div class="err-item">' +
+        '<span class="et">' + e.ts + '</span> ' +
+        '<span class="ef">' + e.filename + '</span> ' +
+        '<span class="em">' + (e.error || 'unknown error') + '</span>' +
+      '</div>'
+    ).join('');
+  }
+}
+
+poll();
+setInterval(poll, 3000);
+</script>
+</body>
+</html>"""
 
 # ── Gallery HTML template ─────────────────────────────────────────────────────
 
