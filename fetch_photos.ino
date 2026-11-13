@@ -29,7 +29,7 @@
 #include <BleKeyboard.h>
 
 #define BUTTON_PIN     19
-#define WAN_SERVER_URL "https://9cfe-2401-4900-53df-cc09-7d2d-3630-dc6a-d779.ngrok-free.app"
+#define WAN_SERVER_URL "https://xxxx-your-ngrok-url.ngrok-free.app"  // ← paste your ngrok URL here
 
 BleKeyboard bleKeyboard("ESP32 Keyboard", "Espressif", 100);
 

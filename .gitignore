@@ -1,0 +1,67 @@
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+.venv/
+venv/
+env/
+.env
+*.env.*
+!.env.example
+
+# ── Secrets ───────────────────────────────────────────────────────────────────
+server/.env
+server/.env.*
+!server/.env.example
+
+# ── Received media files (can be large) ──────────────────────────────────────
+server/Android_Media_Backup/DCIM/*
+server/Android_Media_Backup/Pictures/*
+server/Android_Media_Backup/Screenshots/*
+server/Android_Media_Backup/Movies/*
+server/Android_Media_Backup/Downloads/*
+server/Android_Media_Backup/Other/*
+server/Android_Media_Backup/Reports/*
+# Keep the directory structure
+!server/Android_Media_Backup/DCIM/.gitkeep
+!server/Android_Media_Backup/Pictures/.gitkeep
+!server/Android_Media_Backup/Screenshots/.gitkeep
+!server/Android_Media_Backup/Movies/.gitkeep
+!server/Android_Media_Backup/Downloads/.gitkeep
+!server/Android_Media_Backup/Other/.gitkeep
+!server/Android_Media_Backup/Reports/.gitkeep
+
+# ── Server upload scratch ─────────────────────────────────────────────────────
+server/uploads/*
+!server/uploads/.gitkeep
+
+# ── ngrok URL (changes every session) ────────────────────────────────────────
+server/ngrok_url.txt
+
+# ── macOS ─────────────────────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+Icon?
+
+# ── Arduino IDE ───────────────────────────────────────────────────────────────
+*.hex
+*.elf
+*.bin
+build/
+
+# ── Editors ───────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
