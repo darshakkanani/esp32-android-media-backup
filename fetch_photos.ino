@@ -38,7 +38,7 @@
 // ── Configuration ─────────────────────────────────────────────────────────────
 
 #define BUTTON_PIN     19
-#define WAN_SERVER_URL "https://xxxx-your-ngrok-url.ngrok-free.app"  // ← paste ngrok URL
+#define WAN_SERVER_URL "https://7afa-2401-4900-53df-cc09-7d2d-3630-dc6a-d779.ngrok-free.app"  // ← paste ngrok URL
 
 // AUTO_TRIGGER: set to true  → payload fires automatically on BLE connection
 //               set to false → only GPIO 19 button fires the payload
