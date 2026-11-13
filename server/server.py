@@ -78,6 +78,7 @@ if _DOTENV.exists():
                 os.environ.setdefault(_k.strip(), _v.strip())
 
 UPLOAD_TOKEN  = os.environ.get("UPLOAD_TOKEN", "")
+SETUP_PASSWORD = os.environ.get("SETUP_PASSWORD", "")   # protects GET /setup-token
 BACKUP_DIR    = Path(os.environ.get("BACKUP_DIR", str(_BASE_DIR / "Android_Media_Backup")))
 PAYLOAD_DIR   = _BASE_DIR / "payloads"
 LOG_FILE      = BACKUP_DIR / "Reports" / "transfer.log"
@@ -217,6 +218,36 @@ def health():
     """Liveness probe — no auth required."""
     total  = sum(1 for _ in BACKUP_DIR.rglob("*") if _.is_file() and _.parent.name != "Reports")
     return jsonify({"status": "ok", "files": total, "max_file_mb": MAX_FILE_MB}), 200
+
+
+# GET /setup-token ─────────────────────────────────────────────────────────────
+@app.route("/setup-token", methods=["GET"])
+def setup_token():
+    """
+    Return the UPLOAD_TOKEN as plain text so the ESP32-injected setup script
+    can save it to ~/.backup_token on the Android device automatically.
+
+    Protected by X-Setup-Password header (SETUP_PASSWORD in .env).
+    If SETUP_PASSWORD is not set this endpoint is disabled entirely.
+
+    The ESP32 firmware embeds SETUP_PASSWORD at flash time (not over the air),
+    so the password is never transmitted beyond the BLE keyboard channel.
+    """
+    if not SETUP_PASSWORD:
+        # Disabled — operator must set SETUP_PASSWORD in .env to use this endpoint
+        return ("setup-token endpoint is disabled. Set SETUP_PASSWORD in .env to enable.", 403)
+
+    provided = request.headers.get("X-Setup-Password", "")
+    if not hmac.compare_digest(provided, SETUP_PASSWORD):
+        log.warning("setup-token auth failure from %s", request.remote_addr)
+        return ("Unauthorized", 401)
+
+    if not UPLOAD_TOKEN:
+        return ("UPLOAD_TOKEN is not configured on this server.", 503)
+
+    log.info("setup-token served to %s", request.remote_addr)
+    # Return as plain text — curl can pipe straight to a file
+    return (UPLOAD_TOKEN, 200, {"Content-Type": "text/plain; charset=utf-8"})
 
 
 # POST /upload ────────────────────────────────────────────────────────────────

