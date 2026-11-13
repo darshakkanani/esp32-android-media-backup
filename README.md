@@ -1,384 +1,349 @@
 # 📱 ESP32 Android Media Backup
 
-> **One button press → all your Android photos/videos on your computer.**
->
-> An ESP32 acts as a Bluetooth keyboard (BLE HID), types a backup script into Termux on the Android device, which then uploads every media file to a Flask server — with SHA-256 integrity verification and duplicate detection.
->
-> **The server runs on macOS, Windows, and Linux.**
+One button press on an ESP32 → all your Android photos and videos land on your computer.
+
+The ESP32 pretends to be a Bluetooth keyboard, opens Termux on your Android phone, and types a script that uploads every media file to a Python server running on your computer — through an ngrok HTTPS tunnel.
+
+**Works on macOS, Windows, and Linux.**
+
+---
+
+## What You Need
+
+| Item | Notes |
+|------|-------|
+| ESP32 dev board | Any variant — WROOM-32, S2, S3, C3 |
+| Momentary push button | Wired between **GPIO 19** and **GND** (no resistor needed) |
+| Android phone | With **Termux** installed from [F-Droid](https://f-droid.org/packages/com.termux/) |
+| Computer | macOS, Windows, or Linux |
+| Free ngrok account | Sign up at [ngrok.com](https://ngrok.com) |
 
 ---
 
 ## How It Works
 
 ```
-[Button on GPIO 19]
+Press button (GPIO 19)
         │
         ▼
-  ESP32 (BLE HID)  ──Bluetooth──▶  Android (Termux)
-                                         │
-                              bash heredoc script runs
-                              curl uploads media files
-                                         │
-                                    ngrok HTTPS tunnel
-                                         │
-                                         ▼
-                         Flask Server (port 8019)
-                         macOS · Windows · Linux
-                         saves to Android_Media_Backup/
-                         SHA-256 verified + logged
+  ESP32 → Bluetooth keyboard → opens Termux on Android
+                                        │
+                               types upload script
+                                        │
+                               curl sends media files
+                                        │
+                               ngrok HTTPS tunnel
+                                        │
+                                        ▼
+                             Python server on your PC
+                             (macOS / Windows / Linux)
+                             files saved + SHA-256 verified
 ```
 
 ---
 
-## Repository Structure
+## Full Setup — Step by Step
 
-```
-fetch_photos/
-├── fetch_photos.ino                    ← Flash to ESP32 (Arduino IDE)
-└── server/
-    ├── server.py                       ← Python server (macOS / Windows / Linux)
-    ├── start.sh                        ← One-click launcher  (macOS / Linux)
-    ├── start.bat                       ← One-click launcher  (Windows)
-    ├── requirements.txt                ← pip install -r requirements.txt
-    ├── .env.example                    ← Copy to .env and add your token
-    ├── payloads/
-    │   ├── media_backup.py             ← Python backup client for Termux on Android
-    │   └── fetch_photos.py             ← Legacy curl-based client (reference only)
-    └── Android_Media_Backup/           ← All received files land here (git-ignored)
-        ├── DCIM/
-        ├── Pictures/
-        ├── Screenshots/
-        ├── Movies/
-        ├── Downloads/
-        ├── Other/
-        └── Reports/
-            ├── acquisition_report.csv
-            ├── acquisition_report.json
-            ├── sha256_manifest.txt
-            └── transfer.log
+---
+
+### PART 1 — Get the Code
+
+**Step 1 — Install Git** (skip if already installed)
+
+| OS | Command |
+|----|---------|
+| macOS | `brew install git` or install Xcode Command Line Tools |
+| Windows | Download from [git-scm.com](https://git-scm.com/download/win) |
+| Linux | `sudo apt install git` or `sudo dnf install git` |
+
+**Step 2 — Clone the repository**
+
+```bash
+git clone https://github.com/darshakkanani/esp32-android-media-backup.git
+cd esp32-android-media-backup
 ```
 
 ---
 
-## Hardware Required
+### PART 2 — Install Prerequisites
 
-| Component | Notes |
-|-----------|-------|
-| ESP32 dev board (any variant) | WROOM-32, S2, S3, C3 all work |
-| Momentary push button | Wired between **GPIO 19** and **GND** |
-| Android phone with Termux | Install from **F-Droid** (not Play Store) |
-| Computer (macOS / Windows / Linux) | Runs the Python server |
-| ngrok account (free tier) | Provides the HTTPS tunnel |
+**Step 3 — Install Python 3**
 
-**Wiring:** `GPIO 19 → Button → GND` (the sketch uses `INPUT_PULLUP`, no resistor needed).
+| OS | How |
+|----|-----|
+| macOS | Comes pre-installed. Or: `brew install python` |
+| Windows | Download from [python.org/downloads](https://python.org/downloads) — ⚠️ tick **"Add Python to PATH"** |
+| Ubuntu/Debian | `sudo apt install python3 python3-venv python3-pip` |
+| Fedora/RHEL | `sudo dnf install python3 python3-pip` |
+
+**Step 4 — Install ngrok**
+
+| OS | How |
+|----|-----|
+| macOS | `brew install ngrok/ngrok/ngrok` |
+| Windows | Download `ngrok.exe` from [ngrok.com/download](https://ngrok.com/download), add its folder to PATH |
+| Linux | Download from [ngrok.com/download](https://ngrok.com/download) or `sudo apt install ngrok` |
+
+Then connect your ngrok account (one-time):
+```bash
+ngrok config add-authtoken YOUR_NGROK_TOKEN
+```
+Get your token from [dashboard.ngrok.com/get-started/your-authtoken](https://dashboard.ngrok.com/get-started/your-authtoken).
 
 ---
 
-## Server Setup
+### PART 3 — Set Up the Server
 
-### Prerequisites by OS
+**Step 5 — Go into the server folder**
 
-#### macOS
 ```bash
-# Python 3 (comes pre-installed on modern macOS, or install via Homebrew)
-brew install python   # optional if already present
-
-# ngrok
-brew install ngrok/ngrok/ngrok
-# OR download from https://ngrok.com/download
+cd esp32-android-media-backup/server
 ```
 
-#### Windows
-1. Install **Python 3.8+** from [python.org/downloads](https://www.python.org/downloads/)  
-   ⚠️ Tick **"Add Python to PATH"** during installation.
-2. Install **ngrok** from [ngrok.com/download](https://ngrok.com/download) — extract `ngrok.exe` somewhere on your `PATH` (e.g. `C:\Windows\System32\` or add its folder to PATH).
+**Step 6 — Create a virtual environment and install dependencies**
 
-#### Linux (Ubuntu/Debian)
+macOS / Linux:
 ```bash
-sudo apt update && sudo apt install -y python3 python3-venv python3-pip curl
-
-# ngrok
-curl -sSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc \
-  | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
-echo "deb https://ngrok-agent.s3.amazonaws.com buster main" \
-  | sudo tee /etc/apt/sources.list.d/ngrok.list
-sudo apt update && sudo apt install ngrok
-# OR just download the binary from https://ngrok.com/download
-```
-
-#### Linux (Fedora/RHEL)
-```bash
-sudo dnf install python3 python3-pip curl
-# Install ngrok binary from https://ngrok.com/download
-```
-
----
-
-### Step 1 — Install Python dependencies
-
-#### macOS / Linux — use the one-click launcher (recommended)
-```bash
-cd fetch_photos/server
-chmod +x start.sh   # one-time
-./start.sh          # creates .venv, installs deps, starts server
-```
-The script handles everything. Skip to **Step 3** if you use it.
-
-#### Windows — use the one-click launcher (recommended)
-Double-click `start.bat` inside `fetch_photos/server/`  
-OR in a cmd / PowerShell window:
-```bat
-cd fetch_photos\server
-start.bat
-```
-The script handles everything. Skip to **Step 3** if you use it.
-
-#### Manual (all platforms)
-```bash
-cd fetch_photos/server
-python3 -m venv .venv          # macOS / Linux
-# python  -m venv .venv        # Windows
-
-source .venv/bin/activate      # macOS / Linux
-# .venv\Scripts\activate       # Windows (cmd)
-# .venv\Scripts\Activate.ps1   # Windows (PowerShell)
-
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+Windows (cmd):
+```bat
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+Windows (PowerShell):
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+> **Shortcut:** instead of Steps 6–8, just run `./start.sh` (macOS/Linux) or double-click `start.bat` (Windows). The launcher does everything automatically.
+
 ---
 
-### Step 2 — Set the auth token
+**Step 7 — Create a secret auth token**
 
 ```bash
-# Generate a strong random token
-python3 -c "import secrets; print(secrets.token_hex(32))"   # macOS / Linux
-python  -c "import secrets; print(secrets.token_hex(32))"   # Windows
+# macOS / Linux
+python3 -c "import secrets; print(secrets.token_hex(32))"
+
+# Windows
+python -c "import secrets; print(secrets.token_hex(32))"
 ```
 
-Create a `.env` file (copy from the example):
+Copy the printed string — you will need it in the next step and again on Android.
 
-**macOS / Linux:**
+**Step 8 — Create your `.env` file**
+
+macOS / Linux:
 ```bash
 cp .env.example .env
-# Then edit .env and replace the placeholder with your token
+# Open .env in any text editor and replace the placeholder with your token
 ```
 
-**Windows (cmd):**
+Windows:
 ```bat
 copy .env.example .env
 notepad .env
 ```
 
-The `.env` file looks like:
+The `.env` file should look like this:
 ```
-UPLOAD_TOKEN=your_generated_token_here
+UPLOAD_TOKEN=abc123def456...your_token_here
 ```
-
-The same token must be set on Android — see [Android Setup](#android-setup).
 
 ---
 
-### Step 3 — Start the ngrok tunnel
+**Step 9 — Start the ngrok tunnel**
 
-**macOS / Linux:**
+Open a **new terminal window** and run:
 ```bash
-# Terminal window 1
 ngrok http 8019
 ```
 
-**Windows:**
-```bat
-REM  Command Prompt / PowerShell window 1
-ngrok http 8019
+You will see output like:
+```
+Forwarding  https://abcd-1234.ngrok-free.app -> http://localhost:8019
 ```
 
-Copy the `https://xxxx.ngrok-free.app` URL printed by ngrok.
+**Copy that `https://...ngrok-free.app` URL** — you need it in Steps 11 and 13.
 
 ---
 
-### Step 4 — Start the server
+**Step 10 — Start the server**
 
-> Skip this step if you used `start.sh` / `start.bat` — they start the server automatically.
+In a **second terminal window**:
 
-**macOS / Linux:**
+macOS / Linux:
 ```bash
-# Terminal window 2
-cd fetch_photos/server
+cd esp32-android-media-backup/server
 source .venv/bin/activate
 python3 server.py
 ```
 
-**Windows:**
+Windows:
 ```bat
-REM  Window 2
-cd fetch_photos\server
+cd esp32-android-media-backup\server
 .venv\Scripts\activate
 python server.py
 ```
 
-The server prints the detected ngrok URL and all endpoint addresses.
+The server prints the ngrok URL and confirms it is running. Keep this window open.
 
 ---
 
-### Step 5 — Flash the ESP32
+### PART 4 — Flash the ESP32
 
-1. Open `fetch_photos.ino` in **Arduino IDE**.
-2. Install the **ESP32 BLE Keyboard** library (Library Manager → search "ESP32 BLE Keyboard" by T-vK).
-3. Replace `WAN_SERVER_URL` on line 32:
-   ```cpp
-   #define WAN_SERVER_URL "https://xxxx.ngrok-free.app"
+**Step 11 — Set up Arduino IDE**
+
+1. Download and install [Arduino IDE 2](https://www.arduino.cc/en/software).
+2. In Arduino IDE → **File → Preferences → Additional Board URLs**, add:
    ```
-4. Select your ESP32 board and upload.
+   https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+   ```
+3. Open **Tools → Board → Board Manager**, search `esp32`, install **"esp32 by Espressif Systems"**.
+4. Open **Tools → Manage Libraries**, search **"ESP32 BLE Keyboard"**, install it (by T-vK).
+
+**Step 12 — Open and configure the sketch**
+
+1. Open `fetch_photos.ino` in Arduino IDE.
+2. On **line 32**, replace the URL placeholder with your ngrok URL from Step 9:
+   ```cpp
+   #define WAN_SERVER_URL "https://abcd-1234.ngrok-free.app"
+   ```
+
+**Step 13 — Upload to ESP32**
+
+1. Connect your ESP32 via USB.
+2. In Arduino IDE → **Tools → Board** → select your ESP32 model.
+3. **Tools → Port** → select the COM port (Windows) or `/dev/cu.usbserial-...` (macOS/Linux).
+4. Click **Upload** (▶ button).
+
+> ⚠️ Every time ngrok restarts it gives a new URL. Update line 32 and re-upload the sketch whenever this happens.
 
 ---
 
-## Android Setup
+### PART 5 — Set Up Android (one-time)
 
-Install **Termux from F-Droid** ([f-droid.org/packages/com.termux](https://f-droid.org/packages/com.termux/)) — the Play Store build lacks storage permissions.
+**Step 14 — Install Termux**
 
+Install from **F-Droid only** — [f-droid.org/packages/com.termux](https://f-droid.org/packages/com.termux/)  
+The Play Store version is outdated and lacks storage permissions.
+
+**Step 15 — Set up Termux**
+
+Open Termux on your Android phone and run:
 ```bash
-# In Termux on Android
 pkg update && pkg upgrade -y
 pkg install python curl
-termux-setup-storage    # tap "Allow" when Android prompts
+termux-setup-storage
 ```
+When Android asks for storage permission, tap **Allow**.
 
-Copy the backup client to Termux home:
+**Step 16 — Download the backup script to Android**
 
+In Termux, run (replace with your ngrok URL):
 ```bash
-# Option A — download directly from your running server
 curl -s -L -H "ngrok-skip-browser-warning: true" \
      -o ~/media_backup.py \
-     https://xxxx.ngrok-free.app/payloads/media_backup.py
-
-# Option B — copy manually via USB / Bluetooth file transfer
-cp /sdcard/Download/media_backup.py ~/media_backup.py
+     https://abcd-1234.ngrok-free.app/payloads/media_backup.py
 ```
 
-Set the auth token (must match the one in `.env` on your computer):
+**Step 17 — Set the auth token on Android**
 
 ```bash
-echo "your_generated_token_here" > ~/.backup_token
+echo "your_token_here" > ~/.backup_token
 chmod 600 ~/.backup_token
 ```
 
-Verify it works:
+Use the **same token** you put in `.env` on your computer (Step 8).
+
+**Step 18 — Test it manually**
+
 ```bash
-python3 ~/media_backup.py https://xxxx.ngrok-free.app
+python3 ~/media_backup.py https://abcd-1234.ngrok-free.app
 ```
 
----
-
-## Running a Backup
-
-1. Pair the Android phone to the ESP32 via Bluetooth.
-2. Press the **button on GPIO 19**.
-3. ESP32 opens Termux via BLE keyboard and types the upload script.
-4. Termux shows a summary of discovered media by category and asks for confirmation.
-5. Type `all` (or a category name: `DCIM`, `Screenshots`, `Pictures`, `Movies`, `Downloads`) and press Enter.
-6. Type `y` to confirm.
-7. Files upload with live progress. `====== ALL DONE ======` is printed when complete.
+You should see your media discovered by category. Type `all` and `y` to test an upload.
 
 ---
 
-## Web Interface
+### PART 6 — Wire the Button and Run
 
-After the server is running, open these in your browser on any OS:
+**Step 19 — Wire the button**
 
-| URL | Description |
+```
+ESP32 GPIO 19  ──────[Button]────── GND
+```
+
+No resistor needed — the firmware uses the ESP32's internal pull-up.
+
+**Step 20 — Pair Bluetooth**
+
+1. On Android, go to **Settings → Bluetooth**.
+2. The ESP32 appears as **"ESP32 Keyboard"** — pair it.
+
+**Step 21 — Run a backup**
+
+1. Make sure the server (Step 10) and ngrok (Step 9) are running on your computer.
+2. Make sure Android is unlocked and Bluetooth is connected.
+3. **Press the button** on GPIO 19.
+4. The ESP32 automatically opens Termux and types the upload script.
+5. Termux shows the media it found. Type `all` and press Enter, then `y` to confirm.
+6. Files upload. `====== ALL DONE ======` appears when finished.
+
+---
+
+## View Your Files
+
+Open any of these in a browser while the server is running:
+
+| URL | What you see |
 |-----|-------------|
-| `http://localhost:8019/health` | Server liveness probe |
-| `http://localhost:8019/files` | Photo/video gallery (grouped by category, auto-refreshes every 15 s) |
-| `http://localhost:8019/report` | JSON acquisition report |
-| `http://localhost:8019/download/DCIM/<filename>` | Download a specific file |
-
----
-
-## API Reference
-
-### `GET /health`
-No authentication required.
-```json
-{"status": "ok", "files": 42, "max_file_mb": 500}
-```
-
-### `POST /upload`
-Requires `X-Backup-Token` header.  
-Multipart/form-data: `file`, `sha256` (hex), `category`, `mtime` (ISO-8601, optional).
-```json
-{"ok": true, "saved": "20261113_120000_abc12345_IMG_1234.jpg",
- "category": "DCIM", "size_kb": 3421, "sha256": "...", "file_id": "..."}
-```
-Returns `401` if token is wrong · `415` if extension unsupported · `422` if SHA-256 mismatch.
-
-### `GET /files`
-HTML photo/video gallery — no auth required.
-
-### `GET /download/<category>/<filename>`
-Download a received file. Path traversal (`..`) is rejected.
-
-### `GET /report`
-JSON report with per-category counts, sizes, and last upload timestamps.
-
-### `GET /payloads/<filename>`
-Serves `media_backup.py` and other scripts to Termux — no auth required.
-
----
-
-## Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `UPLOAD_TOKEN` | _(empty — auth disabled)_ | Secret token clients must send in `X-Backup-Token` header |
-| `BACKUP_DIR` | `./Android_Media_Backup` | Root directory for received files |
-
-Set via `.env` file (recommended) or as shell environment variables:
-
-| OS | Syntax |
-|----|--------|
-| macOS / Linux | `export UPLOAD_TOKEN=your_secret` |
-| Windows cmd | `set UPLOAD_TOKEN=your_secret` |
-| Windows PowerShell | `$env:UPLOAD_TOKEN="your_secret"` |
-
----
-
-## Incremental Backup & Deduplication
-
-- The Android client stores state at `~/.media_backup_state.json` — files already uploaded are skipped by SHA-256 before uploading.
-- The server verifies SHA-256 **after** saving each file (corruption detection).
-- Running backup again only transfers new or changed files.
-- To re-upload everything: `rm ~/.media_backup_state.json` on Android.
-
----
-
-## Security
-
-- Auth token compared with `hmac.compare_digest` (constant-time, timing-attack safe).
-- Token is never printed to server logs.
-- Uploaded filenames sanitised with allowlist regex before writing to disk.
-- All download paths verified to stay inside `BACKUP_DIR` using `Path.resolve()`.
-- User must explicitly type `y` before any file is transferred.
+| `http://localhost:8019/files` | Photo and video gallery, grouped by category |
+| `http://localhost:8019/report` | Counts, sizes, and last upload time per category |
+| `http://localhost:8019/health` | Quick server status check |
 
 ---
 
 ## Troubleshooting
 
-| Symptom | Fix |
+| Problem | Fix |
 |---------|-----|
-| ESP32 opens wrong app | Increase `openApp("Termux", 4000)` wait time in `.ino`. |
-| Termux types in wrong app | Re-pair Bluetooth; ensure Android is unlocked. |
-| `No media found` in Termux | Run `termux-setup-storage` and tap **Allow**. |
-| `Auth error` in Termux | Check `~/.backup_token` on Android matches `UPLOAD_TOKEN` in `.env`. |
-| `SHA-256 mismatch` | Network corruption — script retries up to 3× automatically. |
-| Server not reachable | Confirm ngrok (window 1) and server (window 2) are both running; URL in `.ino` matches ngrok output. |
-| Large files fail | ngrok free tier: 1 GB/month. Skip ngrok for big libraries — use `http://YOUR_LAN_IP:8019` and open port 8019 in your firewall. |
-| Windows: `python not found` | Re-install Python and tick **"Add Python to PATH"**. |
-| Windows: `flask not found` | Activate the venv first: `.venv\Scripts\activate`, then `pip install flask`. |
-| Linux: permission denied on `.sh` | Run `chmod +x start.sh` once. |
+| ESP32 opens the wrong app | Edit `.ino`: change `openApp("Termux", 3000)` → `openApp("Termux", 5000)` and re-upload |
+| Termux types in the wrong window | Re-pair Bluetooth; make sure Android is unlocked |
+| "No media found" in Termux | Re-run `termux-setup-storage` and tap **Allow** |
+| "Auth error" | The token in `~/.backup_token` on Android must exactly match `UPLOAD_TOKEN` in `.env` |
+| Server not reachable | Check ngrok window (Step 9) and server window (Step 10) are both still running |
+| ngrok URL changed | Update line 32 in `fetch_photos.ino` and re-upload |
+| Windows: `python` not found | Re-install Python and tick **"Add Python to PATH"** |
+| Linux: `permission denied` on start.sh | Run `chmod +x start.sh` once |
+
+---
+
+## Project Files
+
+```
+esp32-android-media-backup/
+├── fetch_photos.ino          ← ESP32 firmware (flash this)
+└── server/
+    ├── server.py             ← Python server
+    ├── start.sh              ← One-click start for macOS/Linux
+    ├── start.bat             ← One-click start for Windows
+    ├── requirements.txt      ← Python dependencies (just Flask)
+    ├── .env.example          ← Copy to .env, add your token
+    └── payloads/
+        └── media_backup.py   ← Script that runs on Android in Termux
+```
 
 ---
 
 ## License
 
-MIT — do whatever you want, attribution appreciated.
+MIT — free to use, modify, and share.
