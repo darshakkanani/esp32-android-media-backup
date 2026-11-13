@@ -303,7 +303,9 @@ void runAutoPayload() {
 
   // ── 3. Run media_backup.py non-interactively ────────────────────────────
   typeLine("echo '[run] Starting upload...'");
-  typeLine("python3 ~/media_backup.py '" WAN_SERVER_URL "' --auto");
+  // Termux installs Python as 'python', not 'python3'.
+  // This one-liner works on both Termux and standard Linux.
+  typeLine("PY=$(command -v python3 || command -v python) && $PY ~/media_backup.py '" WAN_SERVER_URL "' --auto");
 
   typeLine("SETUP_RUN_END");
 

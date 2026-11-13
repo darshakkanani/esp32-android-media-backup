@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """
 media_backup.py — Android Termux media exfiltration client
 ===========================================================
