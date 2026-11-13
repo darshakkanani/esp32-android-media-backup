@@ -927,6 +927,38 @@ tbody td{padding:7px 10px;color:#cbd5e1;white-space:nowrap}
       </div>
     </div>
 
+    <!-- Device Connection Status — always visible, live-updated every 3 s -->
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px">
+
+      <!-- ESP32 WiFi -->
+      <div style="display:flex;align-items:center;gap:12px;padding:14px 16px;border-radius:10px;border:1px solid var(--border);background:var(--surface)">
+        <div id="ov-esp-dot" style="width:11px;height:11px;border-radius:50%;background:var(--muted);flex-shrink:0"></div>
+        <div style="min-width:0">
+          <div id="ov-esp-label" style="font-size:.8rem;font-weight:600;color:#f1f5f9">ESP32</div>
+          <div id="ov-esp-sub" style="font-size:.68rem;color:var(--muted);margin-top:1px">Waiting for heartbeat...</div>
+        </div>
+      </div>
+
+      <!-- Android BLE -->
+      <div style="display:flex;align-items:center;gap:12px;padding:14px 16px;border-radius:10px;border:1px solid var(--border);background:var(--surface)">
+        <div id="ov-ble-dot" style="width:11px;height:11px;border-radius:50%;background:var(--muted);flex-shrink:0"></div>
+        <div style="min-width:0">
+          <div id="ov-ble-label" style="font-size:.8rem;font-weight:600;color:#f1f5f9">📱 Android Device</div>
+          <div id="ov-ble-sub" style="font-size:.68rem;color:var(--muted);margin-top:1px">Bluetooth not connected</div>
+        </div>
+      </div>
+
+      <!-- Host USB -->
+      <div style="display:flex;align-items:center;gap:12px;padding:14px 16px;border-radius:10px;border:1px solid var(--border);background:var(--surface)">
+        <div id="ov-usb-dot" style="width:11px;height:11px;border-radius:50%;background:var(--muted);flex-shrink:0"></div>
+        <div style="min-width:0">
+          <div id="ov-usb-label" style="font-size:.8rem;font-weight:600;color:#f1f5f9">💻 Host USB</div>
+          <div id="ov-usb-sub" style="font-size:.68rem;color:var(--muted);margin-top:1px">Serial port not open</div>
+        </div>
+      </div>
+
+    </div>
+
     <!-- KPIs -->
     <div class="kpi-grid">
       <div class="kpi blue">
@@ -1276,8 +1308,71 @@ function render(d) {
   // ── errors page
   renderErrors((d.history||[]).filter(h=>!h.ok));
 
+  // ── overview connection status cards ─────────────────────────────────
+  updateOverviewStatus(d);
+
   // ── control panel
   updateControlPanel(d);
+}
+
+function updateOverviewStatus(d) {
+  const online  = d.esp32_online;
+  const bleConn = d.ble_connected;
+  const usbConn = d.usb_connected;
+
+  // ESP32 card
+  const espDot = document.getElementById('ov-esp-dot');
+  const espLbl = document.getElementById('ov-esp-label');
+  const espSub = document.getElementById('ov-esp-sub');
+  if (online) {
+    espDot.style.background = 'var(--green)';
+    espLbl.style.color = 'var(--green)';
+    espSub.textContent = 'Online · last seen ' + d.esp32_age_s + ' s ago';
+  } else if (d.esp32_age_s !== null) {
+    espDot.style.background = 'var(--amber)';
+    espLbl.style.color = 'var(--amber)';
+    espSub.textContent = 'Not responding · ' + d.esp32_age_s + ' s ago';
+  } else {
+    espDot.style.background = 'var(--muted)';
+    espLbl.style.color = '#f1f5f9';
+    espSub.textContent = 'Not seen — set WiFi credentials & re-upload';
+  }
+
+  // Android BLE card
+  const bleDot = document.getElementById('ov-ble-dot');
+  const bleLbl = document.getElementById('ov-ble-label');
+  const bleSub = document.getElementById('ov-ble-sub');
+  if (!online) {
+    bleDot.style.background = 'var(--muted)';
+    bleLbl.style.color = '#f1f5f9';
+    bleSub.textContent = 'Unknown — ESP32 not online';
+  } else if (bleConn) {
+    bleDot.style.background = 'var(--green)';
+    bleLbl.style.color = 'var(--green)';
+    bleSub.textContent = 'Paired & Connected via BLE ✓';
+  } else {
+    bleDot.style.background = 'var(--amber)';
+    bleLbl.style.color = 'var(--amber)';
+    bleSub.textContent = 'Not connected — pair in Bluetooth settings';
+  }
+
+  // Host USB card
+  const usbDot = document.getElementById('ov-usb-dot');
+  const usbLbl = document.getElementById('ov-usb-label');
+  const usbSub = document.getElementById('ov-usb-sub');
+  if (!online) {
+    usbDot.style.background = 'var(--muted)';
+    usbLbl.style.color = '#f1f5f9';
+    usbSub.textContent = 'Unknown — ESP32 not online';
+  } else if (usbConn) {
+    usbDot.style.background = '#60a5fa';
+    usbLbl.style.color = '#60a5fa';
+    usbSub.textContent = 'Serial port open (Arduino IDE / monitor)';
+  } else {
+    usbDot.style.background = 'var(--muted)';
+    usbLbl.style.color = '#f1f5f9';
+    usbSub.textContent = 'Serial port not open';
+  }
 }
 
 // ── sparkline ────────────────────────────────────────────────────────────────
@@ -1548,45 +1643,46 @@ function updateControlPanel(d) {
     document.getElementById('esp32-checklist').style.display = 'none';
   }
 
-  // ── BLE / Android connection status ───────────────────────────────────
+  // ── BLE / Android connection status — always visible ──────────────────
   const bleRow = document.getElementById('ble-status-row');
   const bleDot = document.getElementById('ble-dot');
   const bleTxt = document.getElementById('ble-status-text');
-  if (online) {
-    bleRow.style.display = 'flex';
-    if (bleConn) {
-      bleDot.style.background = 'var(--green)';
-      bleTxt.textContent = '📱 Android — Paired & Connected';
-      bleTxt.style.color = 'var(--green)';
-    } else {
-      bleDot.style.background = 'var(--amber)';
-      bleTxt.textContent = '📱 Android — Not connected  (pair via Bluetooth settings)';
-      bleTxt.style.color = 'var(--amber)';
-    }
+  bleRow.style.display = 'flex';   // always show
+  if (!online) {
+    bleDot.style.background = 'var(--muted)';
+    bleTxt.textContent = '📱 Android — Unknown (ESP32 offline)';
+    bleTxt.style.color = 'var(--muted)';
+  } else if (bleConn) {
+    bleDot.style.background = 'var(--green)';
+    bleTxt.textContent = '📱 Android — Paired & Connected ✓';
+    bleTxt.style.color = 'var(--green)';
   } else {
-    bleRow.style.display = 'none';
+    bleDot.style.background = 'var(--amber)';
+    bleTxt.textContent = '📱 Android — Not connected  (pair via Bluetooth settings)';
+    bleTxt.style.color = 'var(--amber)';
   }
 
-  // ── USB / Serial host connection status ───────────────────────────────
+  // ── USB / Serial host connection status — always visible ──────────────
   const usbRow = document.getElementById('usb-status-row');
   const usbDot = document.getElementById('usb-dot');
   const usbTxt = document.getElementById('usb-status-text');
   const usbSub = document.getElementById('usb-status-sub');
-  if (online) {
-    usbRow.style.display = 'flex';
-    if (usbConn) {
-      usbDot.style.background = '#60a5fa';   // blue — informational
-      usbTxt.textContent = '💻 Host USB — Connected (Serial port open)';
-      usbTxt.style.color = '#60a5fa';
-      usbSub.textContent = 'Your computer has the ESP32 Serial port open (Arduino IDE / monitor)';
-    } else {
-      usbDot.style.background = 'var(--muted)';
-      usbTxt.textContent = '💻 Host USB — Not connected';
-      usbTxt.style.color = 'var(--muted)';
-      usbSub.textContent = 'No host has the ESP32 Serial port open';
-    }
+  usbRow.style.display = 'flex';   // always show
+  if (!online) {
+    usbDot.style.background = 'var(--muted)';
+    usbTxt.textContent = '💻 Host USB — Unknown (ESP32 offline)';
+    usbTxt.style.color = 'var(--muted)';
+    usbSub.textContent = '';
+  } else if (usbConn) {
+    usbDot.style.background = '#60a5fa';
+    usbTxt.textContent = '💻 Host USB — Connected (Serial port open)';
+    usbTxt.style.color = '#60a5fa';
+    usbSub.textContent = 'Your computer has the ESP32 Serial port open (Arduino IDE / monitor)';
   } else {
-    usbRow.style.display = 'none';
+    usbDot.style.background = 'var(--muted)';
+    usbTxt.textContent = '💻 Host USB — Not connected';
+    usbTxt.style.color = 'var(--muted)';
+    usbSub.textContent = 'No host has the ESP32 Serial port open';
   }
 
   // ── Wrong-target warning ──────────────────────────────────────────────
