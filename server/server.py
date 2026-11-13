@@ -1174,78 +1174,344 @@ setInterval(poll, 3000);
 
 # ── Gallery HTML template ─────────────────────────────────────────────────────
 
-GALLERY_HTML = """
-<!DOCTYPE html>
+GALLERY_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Android Media Backup</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Media Gallery</title>
 <style>
-  *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:-apple-system,"Segoe UI",system-ui,sans-serif;
-       background:#f7f8fa;color:#1f2328;padding:24px 32px}
-  h1{font-size:1.3rem;margin-bottom:4px}
-  .sub{font-size:.85rem;color:#57606a;margin-bottom:20px}
-  .bar{display:flex;gap:12px;margin-bottom:28px;flex-wrap:wrap;align-items:center}
-  .badge{background:#e5e7eb;border-radius:20px;padding:4px 12px;font-size:.8rem;color:#57606a}
-  .btn{display:inline-block;padding:8px 16px;border-radius:6px;font-size:.85rem;
-       font-weight:600;text-decoration:none;color:#fff;background:#3b82d4}
-  h2{font-size:1rem;margin:24px 0 10px;border-bottom:1px solid #e5e7eb;padding-bottom:6px}
-  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px}
-  .card{background:#fff;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden}
-  .card img{width:100%;height:140px;object-fit:cover;display:block;background:#f0f0f0}
-  .card video{width:100%;height:140px;object-fit:cover;display:block;background:#111}
-  .card .meta{padding:6px 10px;font-size:.72rem;color:#57606a;
-              white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .card a.dl{display:block;font-size:.75rem;padding:0 10px 8px;
-             color:#3b82d4;text-decoration:none}
-  .empty{color:#57606a;font-size:.9rem;margin-top:40px;text-align:center}
-  .refresh{font-size:.75rem;color:#57606a;margin-left:auto}
+:root{
+  --bg:#0a0c14;--surface:#111420;--surface2:#171b2e;--border:#1f2440;
+  --text:#e2e8f0;--muted:#4b5680;--accent:#4f8ef7;--green:#22d47a;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,"Segoe UI",system-ui,sans-serif;
+     background:var(--bg);color:var(--text);min-height:100vh}
+a{color:var(--accent);text-decoration:none}
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+
+/* ── topbar ── */
+.topbar{display:flex;align-items:center;gap:12px;padding:0 24px;height:52px;
+        background:var(--surface);border-bottom:1px solid var(--border);
+        position:sticky;top:0;z-index:100}
+.topbar h1{font-size:.95rem;font-weight:700;color:#f1f5f9}
+.topbar .sub{font-size:.72rem;color:var(--muted)}
+.topbar-right{margin-left:auto;display:flex;gap:8px;align-items:center}
+.pill{padding:4px 12px;border-radius:16px;border:1px solid var(--border);
+      font-size:.72rem;color:var(--muted);background:var(--surface2)}
+.pill.green{border-color:rgba(34,212,122,.3);color:var(--green);background:rgba(34,212,122,.08)}
+.top-btn{padding:5px 12px;border-radius:6px;font-size:.75rem;border:1px solid var(--border);
+         color:var(--muted);background:var(--surface2);cursor:pointer;transition:all .15s}
+.top-btn:hover{color:#f1f5f9;border-color:#4b5680}
+
+/* ── filter tabs ── */
+.filters{display:flex;gap:6px;padding:14px 24px;flex-wrap:wrap;
+         border-bottom:1px solid var(--border);background:var(--surface)}
+.ftab{padding:5px 14px;border-radius:20px;font-size:.78rem;font-weight:500;
+      border:1px solid var(--border);color:var(--muted);cursor:pointer;
+      background:transparent;transition:all .15s;user-select:none}
+.ftab:hover{color:var(--text);border-color:#4b5680}
+.ftab.active{color:var(--accent);border-color:rgba(79,142,247,.5);
+             background:rgba(79,142,247,.08)}
+.ftab .fc{font-size:.68rem;margin-left:4px;opacity:.7}
+
+/* ── search ── */
+.search-wrap{padding:12px 24px;background:var(--bg)}
+.search-input{width:100%;max-width:360px;background:var(--surface);border:1px solid var(--border);
+              border-radius:8px;padding:7px 14px;color:var(--text);font-size:.82rem;outline:none}
+.search-input:focus{border-color:var(--accent)}
+.search-input::placeholder{color:var(--muted)}
+
+/* ── grid ── */
+.gallery{padding:0 20px 32px;
+         columns:5 180px;column-gap:10px}
+.gitem{break-inside:avoid;margin-bottom:10px;border-radius:8px;overflow:hidden;
+       background:var(--surface);border:1px solid var(--border);
+       cursor:pointer;transition:transform .15s,box-shadow .15s;position:relative}
+.gitem:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(0,0,0,.4)}
+.gitem img{width:100%;display:block;object-fit:cover}
+.gitem .vid-thumb{width:100%;aspect-ratio:16/9;background:#000;
+                  display:flex;align-items:center;justify-content:center}
+.gitem .play-icon{width:40px;height:40px;border-radius:50%;
+                  background:rgba(255,255,255,.18);display:flex;
+                  align-items:center;justify-content:center}
+.gitem .play-icon svg{margin-left:3px}
+.gitem .doc-thumb{width:100%;height:100px;display:flex;align-items:center;
+                  justify-content:center;font-size:2rem;background:var(--surface2)}
+.gitem .item-meta{padding:6px 10px 8px;font-size:.7rem;color:var(--muted);
+                  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gitem .item-cat{position:absolute;top:6px;left:6px;padding:2px 7px;
+                 border-radius:10px;font-size:.62rem;font-weight:600;
+                 background:rgba(0,0,0,.55);color:#fff;backdrop-filter:blur(4px)}
+.gitem .item-dl{position:absolute;top:6px;right:6px;width:26px;height:26px;
+                border-radius:6px;background:rgba(0,0,0,.55);backdrop-filter:blur(4px);
+                display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity .15s}
+.gitem:hover .item-dl{opacity:1}
+
+/* ── section heading ── */
+.sec-head{padding:16px 24px 8px;font-size:.72rem;font-weight:600;color:var(--muted);
+          text-transform:uppercase;letter-spacing:.07em}
+
+/* ── empty ── */
+.empty-state{display:flex;flex-direction:column;align-items:center;
+             justify-content:center;padding:80px 24px;gap:12px;color:var(--muted)}
+.empty-state svg{opacity:.2}
+.empty-state p{font-size:.9rem}
+
+/* ── lightbox ── */
+.lb{position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:1000;
+    display:none;flex-direction:column;align-items:center;justify-content:center}
+.lb.open{display:flex}
+.lb-topbar{position:absolute;top:0;left:0;right:0;height:52px;
+           display:flex;align-items:center;padding:0 16px;gap:12px;
+           background:linear-gradient(to bottom,rgba(0,0,0,.7),transparent)}
+.lb-name{font-size:.8rem;color:#e2e8f0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lb-cat{font-size:.7rem;color:var(--muted);padding:2px 8px;border-radius:10px;
+        border:1px solid var(--border);background:rgba(255,255,255,.06)}
+.lb-counter{font-size:.75rem;color:var(--muted)}
+.lb-close{width:32px;height:32px;border-radius:6px;border:none;cursor:pointer;
+          background:rgba(255,255,255,.1);color:#e2e8f0;font-size:1.1rem;
+          display:flex;align-items:center;justify-content:center;transition:background .15s}
+.lb-close:hover{background:rgba(255,255,255,.2)}
+.lb-dl{padding:5px 14px;border-radius:6px;border:1px solid var(--border);
+       color:#e2e8f0;font-size:.75rem;background:rgba(255,255,255,.08);
+       text-decoration:none;transition:background .15s}
+.lb-dl:hover{background:rgba(255,255,255,.16)}
+.lb-body{max-width:92vw;max-height:82vh;position:relative;display:flex;align-items:center;justify-content:center}
+.lb-body img{max-width:92vw;max-height:82vh;border-radius:4px;object-fit:contain;user-select:none}
+.lb-body video{max-width:92vw;max-height:82vh;border-radius:4px;outline:none}
+.lb-nav{position:absolute;top:50%;transform:translateY(-50%);
+        width:40px;height:40px;border-radius:50%;border:none;cursor:pointer;
+        background:rgba(255,255,255,.12);color:#fff;font-size:1.1rem;
+        display:flex;align-items:center;justify-content:center;
+        transition:background .15s;user-select:none}
+.lb-nav:hover{background:rgba(255,255,255,.25)}
+.lb-prev{left:-56px}
+.lb-next{right:-56px}
+.lb-nav:disabled{opacity:.2;cursor:default}
+.lb-info{position:absolute;bottom:0;left:0;right:0;height:48px;
+         display:flex;align-items:center;padding:0 16px;gap:12px;
+         background:linear-gradient(to top,rgba(0,0,0,.7),transparent)}
+.lb-info .lb-size{font-size:.72rem;color:var(--muted)}
+.lb-strip{position:absolute;bottom:-68px;left:50%;transform:translateX(-50%);
+          display:flex;gap:5px;max-width:90vw;overflow-x:auto;padding:4px 0}
+.lb-strip::-webkit-scrollbar{height:3px}
+.strip-thumb{width:52px;height:52px;border-radius:4px;object-fit:cover;cursor:pointer;
+             flex-shrink:0;opacity:.5;border:2px solid transparent;transition:all .15s}
+.strip-thumb.active{opacity:1;border-color:var(--accent)}
 </style>
 </head>
 <body>
-  <h1>Android Media Backup</h1>
-  <p class="sub">ESP32 BLE HID · Termux · ngrok · cross-platform receiver</p>
-  <div class="bar">
-    <span class="badge">{{ total }} files</span>
-    <span class="badge">{{ total_mb }} MB</span>
-    <a class="btn" href="/report">Report (JSON)</a>
-    <span class="refresh">Auto-refreshes every 15 s</span>
-  </div>
 
-  {% if groups %}
-    {% for cat, files in groups.items() %}
-    <h2>{{ cat }} &mdash; {{ files|length }} files</h2>
-    <div class="grid">
-      {% for fname in files %}
-      {% set ext = fname.rsplit('.',1)[-1].lower() %}
-      <div class="card">
-        {% if ext in ['jpg','jpeg','png','webp','gif','bmp','tiff','tif'] %}
-        <a href="/download/{{ cat }}/{{ fname }}" target="_blank">
-          <img src="/download/{{ cat }}/{{ fname }}" alt="{{ fname }}" loading="lazy">
-        </a>
-        {% elif ext in ['mp4','mov','avi','mkv','3gp','m4v','webm'] %}
-        <video controls preload="metadata">
-          <source src="/download/{{ cat }}/{{ fname }}">
-        </video>
-        {% else %}
-        <div style="height:140px;display:flex;align-items:center;
-                    justify-content:center;font-size:2rem;background:#f0f0f0">📄</div>
-        {% endif %}
-        <div class="meta" title="{{ fname }}">{{ fname }}</div>
-        <a class="dl" href="/download/{{ cat }}/{{ fname }}" download>⬇ Download</a>
+<!-- ── TOPBAR ── -->
+<div class="topbar">
+  <div>
+    <h1>Media Gallery</h1>
+  </div>
+  <span class="sub" style="margin-left:8px">ESP32 BLE HID Lab</span>
+  <div class="topbar-right">
+    <span class="pill green" id="tb-count">{{ total }} files</span>
+    <span class="pill" id="tb-mb">{{ total_mb }} MB</span>
+    <a href="/dashboard" class="top-btn">Dashboard</a>
+    <a href="/report" class="top-btn">Report</a>
+  </div>
+</div>
+
+<!-- ── FILTER TABS ── -->
+<div class="filters" id="filters">
+  <div class="ftab active" data-cat="all" onclick="filter('all',this)">
+    All <span class="fc" id="fc-all">{{ total }}</span>
+  </div>
+  {% for cat, files in groups.items() %}
+  <div class="ftab" data-cat="{{ cat }}" onclick="filter('{{ cat }}',this)">
+    {{ cat }} <span class="fc">{{ files|length }}</span>
+  </div>
+  {% endfor %}
+</div>
+
+<!-- ── SEARCH ── -->
+<div class="search-wrap">
+  <input class="search-input" type="text" id="search" placeholder="Search filenames..." oninput="applySearch()">
+</div>
+
+<!-- ── GALLERY ── -->
+<div class="gallery" id="gallery">
+{% if groups %}
+  {% for cat, files in groups.items() %}
+    {% for fname in files %}
+    {% set ext = fname.rsplit('.',1)[-1].lower() %}
+    {% set is_img = ext in ['jpg','jpeg','png','webp','gif','bmp','tiff','tif','heic'] %}
+    {% set is_vid = ext in ['mp4','mov','avi','mkv','3gp','m4v','webm','ts'] %}
+    <div class="gitem"
+         data-cat="{{ cat }}"
+         data-name="{{ fname }}"
+         data-url="/download/{{ cat }}/{{ fname }}"
+         data-type="{{ 'img' if is_img else ('vid' if is_vid else 'doc') }}"
+         onclick="openLightbox(this)">
+      <span class="item-cat">{{ cat }}</span>
+      <a class="item-dl" href="/download/{{ cat }}/{{ fname }}" download onclick="event.stopPropagation()" title="Download">
+        <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M6.5 1v8M3 6l3.5 3.5L10 6M1 12h11" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </a>
+      {% if is_img %}
+      <img src="/download/{{ cat }}/{{ fname }}" alt="{{ fname }}" loading="lazy">
+      {% elif is_vid %}
+      <div class="vid-thumb">
+        <div class="play-icon">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="white"><path d="M4 2l10 6-10 6V2z"/></svg>
+        </div>
       </div>
-      {% endfor %}
+      {% else %}
+      <div class="doc-thumb">📄</div>
+      {% endif %}
+      <div class="item-meta" title="{{ fname }}">{{ fname }}</div>
     </div>
     {% endfor %}
-  {% else %}
-  <p class="empty">No media received yet. Press GPIO 19 on the ESP32.</p>
-  {% endif %}
-<script>setTimeout(()=>location.reload(),15000)</script>
+  {% endfor %}
+{% else %}
+  <div class="empty-state">
+    <svg width="56" height="56" viewBox="0 0 56 56" fill="none">
+      <rect x="8" y="12" width="40" height="32" rx="4" stroke="#4b5680" stroke-width="1.5"/>
+      <circle cx="20" cy="22" r="3" stroke="#4b5680" stroke-width="1.5"/>
+      <path d="M8 36l10-8 8 6 8-10 14 12" stroke="#4b5680" stroke-width="1.5" stroke-linejoin="round"/>
+    </svg>
+    <p>No media received yet.</p>
+    <p style="font-size:.8rem">Connect the ESP32 and press the button.</p>
+  </div>
+{% endif %}
+</div>
+
+<!-- ── LIGHTBOX ── -->
+<div class="lb" id="lb" onclick="lbBgClick(event)">
+  <div class="lb-topbar">
+    <span class="lb-cat" id="lb-cat"></span>
+    <span class="lb-name" id="lb-name"></span>
+    <span class="lb-counter" id="lb-counter"></span>
+    <a class="lb-dl" id="lb-dl" href="#" download>⬇ Download</a>
+    <button class="lb-close" onclick="closeLightbox()">✕</button>
+  </div>
+  <div class="lb-body" id="lb-body">
+    <button class="lb-nav lb-prev" id="lb-prev" onclick="lbMove(-1)">‹</button>
+    <div id="lb-media"></div>
+    <button class="lb-nav lb-next" id="lb-next" onclick="lbMove(1)">›</button>
+  </div>
+</div>
+
+<script>
+// ── data ──────────────────────────────────────────────────────────────────────
+const ALL_ITEMS = Array.from(document.querySelectorAll('.gitem'));
+let _visible = [...ALL_ITEMS];
+let _lbIdx   = 0;
+let _lbItems = [];
+
+// ── filter ────────────────────────────────────────────────────────────────────
+function filter(cat, el) {
+  document.querySelectorAll('.ftab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  applyFilter(cat);
+}
+
+function applyFilter(cat) {
+  const q = document.getElementById('search').value.toLowerCase();
+  ALL_ITEMS.forEach(item => {
+    const catMatch = cat === 'all' || item.dataset.cat === cat;
+    const nameMatch = !q || item.dataset.name.toLowerCase().includes(q);
+    item.style.display = (catMatch && nameMatch) ? '' : 'none';
+  });
+  _visible = ALL_ITEMS.filter(i => i.style.display !== 'none');
+}
+
+function applySearch() {
+  const active = document.querySelector('.ftab.active');
+  const cat = active ? active.dataset.cat : 'all';
+  applyFilter(cat);
+}
+
+// ── lightbox ──────────────────────────────────────────────────────────────────
+function openLightbox(el) {
+  _lbItems = ALL_ITEMS.filter(i => i.style.display !== 'none');
+  _lbIdx = _lbItems.indexOf(el);
+  renderLb();
+  document.getElementById('lb').classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+
+function closeLightbox() {
+  document.getElementById('lb').classList.remove('open');
+  document.body.style.overflow = '';
+  // stop any playing video
+  const vid = document.querySelector('#lb-media video');
+  if (vid) { vid.pause(); vid.src = ''; }
+}
+
+function lbBgClick(e) {
+  if (e.target === document.getElementById('lb')) closeLightbox();
+}
+
+function lbMove(dir) {
+  _lbIdx = Math.max(0, Math.min(_lbItems.length - 1, _lbIdx + dir));
+  renderLb();
+}
+
+function renderLb() {
+  const item = _lbItems[_lbIdx];
+  if (!item) return;
+  const url  = item.dataset.url;
+  const name = item.dataset.name;
+  const cat  = item.dataset.cat;
+  const type = item.dataset.type;
+
+  document.getElementById('lb-name').textContent    = name;
+  document.getElementById('lb-cat').textContent     = cat;
+  document.getElementById('lb-counter').textContent = (_lbIdx + 1) + ' / ' + _lbItems.length;
+  const dlEl = document.getElementById('lb-dl');
+  dlEl.href = url; dlEl.download = name;
+
+  const media = document.getElementById('lb-media');
+  // stop any previous video
+  const prevVid = media.querySelector('video');
+  if (prevVid) { prevVid.pause(); prevVid.src = ''; }
+
+  if (type === 'img') {
+    media.innerHTML = '<img src="' + url + '" alt="' + name + '" draggable="false">';
+  } else if (type === 'vid') {
+    media.innerHTML = '<video controls autoplay src="' + url + '" style="max-width:92vw;max-height:82vh;border-radius:4px;outline:none"></video>';
+  } else {
+    media.innerHTML = '<div style="color:#e2e8f0;font-size:.9rem;padding:40px;text-align:center">📄 ' + name + '<br><br><a href="' + url + '" download style="color:var(--accent)">Download file</a></div>';
+  }
+
+  document.getElementById('lb-prev').disabled = _lbIdx === 0;
+  document.getElementById('lb-next').disabled = _lbIdx === _lbItems.length - 1;
+}
+
+// ── keyboard navigation ───────────────────────────────────────────────────────
+document.addEventListener('keydown', e => {
+  const lb = document.getElementById('lb');
+  if (!lb.classList.contains('open')) return;
+  if (e.key === 'ArrowLeft')  lbMove(-1);
+  if (e.key === 'ArrowRight') lbMove(1);
+  if (e.key === 'Escape')     closeLightbox();
+});
+
+// ── touch / swipe ─────────────────────────────────────────────────────────────
+let _tx = null;
+document.getElementById('lb').addEventListener('touchstart', e => { _tx = e.touches[0].clientX; }, {passive:true});
+document.getElementById('lb').addEventListener('touchend',   e => {
+  if (_tx === null) return;
+  const dx = e.changedTouches[0].clientX - _tx;
+  _tx = null;
+  if (Math.abs(dx) > 50) lbMove(dx < 0 ? 1 : -1);
+});
+
+// ── auto-refresh ──────────────────────────────────────────────────────────────
+setTimeout(() => {
+  if (!document.getElementById('lb').classList.contains('open'))
+    location.reload();
+}, 20000);
+</script>
 </body>
-</html>
-"""
+</html>"""
 
 # ── ngrok URL detection ───────────────────────────────────────────────────────
 
