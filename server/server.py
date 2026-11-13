@@ -612,6 +612,18 @@ def trigger():
     return jsonify({"ok": True, "queued": _pending_cmd}), 200
 
 
+# POST /api/cancel ────────────────────────────────────────────────────────────
+@app.route("/api/cancel", methods=["POST"])
+@require_token
+def api_cancel():
+    """Cancel the currently queued command (if any)."""
+    global _pending_cmd
+    had_cmd = _pending_cmd is not None
+    _pending_cmd = None
+    log.info("Pending command cancelled by %s", request.remote_addr)
+    return jsonify({"ok": True, "had_cmd": had_cmd}), 200
+
+
 # POST /api/config ─────────────────────────────────────────────────────────────
 @app.route("/api/config", methods=["POST"])
 @require_token
@@ -1099,8 +1111,9 @@ tbody td{padding:7px 10px;color:#cbd5e1;white-space:nowrap}
         <div style="font-size:.8rem;color:var(--muted);line-height:1.6">
           Queues a payload command. The ESP32 picks it up on its next poll cycle (≤ 2 s), opens Termux on the target device, and starts the upload.
         </div>
-        <div id="ctrl-pending-warn" style="display:none;padding:8px 12px;border-radius:7px;background:rgba(245,166,35,.08);border:1px solid rgba(245,166,35,.25);font-size:.75rem;color:#f5a623">
-          ⏳ A command is already queued — waiting for ESP32 to pick it up.
+        <div id="ctrl-pending-warn" style="display:none;padding:8px 12px;border-radius:7px;background:rgba(245,166,35,.08);border:1px solid rgba(245,166,35,.25);font-size:.75rem;color:#f5a623;display:flex;align-items:center;gap:10px">
+          <span>⏳ A command is already queued — waiting for ESP32 to pick it up.</span>
+          <button onclick="cancelTrigger()" style="margin-left:auto;padding:3px 10px;border-radius:5px;border:1px solid rgba(245,166,35,.4);background:rgba(245,166,35,.12);color:#f5a623;font-size:.7rem;cursor:pointer;flex-shrink:0">✕ Cancel</button>
         </div>
         <button id="trigger-btn" onclick="fireTrigger()"
           style="width:100%;padding:14px;border-radius:8px;border:none;cursor:pointer;
@@ -1180,7 +1193,7 @@ function setConn(ok) {
   const dot = document.getElementById('conn-dot');
   const lbl = document.getElementById('conn-label');
   dot.className = 'dot' + (ok ? ' active' : ' red');
-  lbl.textContent = ok ? 'Connected' : 'Offline';
+  lbl.textContent = ok ? 'Server Online' : 'Server Offline';
   dot.style.background = ok ? 'var(--green)' : 'var(--red)';
 }
 
@@ -1461,6 +1474,19 @@ function setResult(msg, col) {
   const el = document.getElementById('trigger-result');
   el.style.color = col; el.textContent = msg;
   setTimeout(() => { el.textContent = ''; }, 7000);
+}
+
+async function cancelTrigger() {
+  try {
+    const headers = {'Content-Type':'application/json'};
+    const token = document.cookie.split(';').map(c=>c.trim()).find(c=>c.startsWith('tok='));
+    if (token) headers['X-Backup-Token'] = token.split('=')[1];
+    const r = await fetch('/api/cancel', {method:'POST', headers});
+    const d = await r.json();
+    if (d.ok) setResult('✓ Queued command cancelled', 'var(--amber)');
+  } catch(e) {
+    setResult('Cancel failed', 'var(--red)');
+  }
 }
 
 function updateControlPanel(d) {
