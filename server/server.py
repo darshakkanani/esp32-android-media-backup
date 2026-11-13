@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 """
-server.py — Android media backup receiver
-==========================================
-Receives media files uploaded by media_backup.py running in Termux on Android.
+server.py — ESP32 BLE HID Lab — Media Exfiltration Receiver
+=============================================================
+CTF / Hardware Hacking Lab — Authorized Devices Only.
+
+Receives media files exfiltrated from an Android device by media_backup.py
+running in Termux, triggered by an ESP32 acting as a rogue BLE HID keyboard.
 Exposed to the internet via ngrok HTTPS tunnel.
 Runs on macOS, Linux, and Windows (Python 3.8+).
+
+USE ONLY ON DEVICES YOU OWN OR HAVE EXPLICIT WRITTEN AUTHORIZATION TO TEST.
 
 HOW TO START (two terminal windows):
   Window 1:  ngrok http 8019

