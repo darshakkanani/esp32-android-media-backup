@@ -1,20 +1,30 @@
 #!/usr/bin/env python3
 """
-server.py — macOS media backup receiver
-========================================
+server.py — Android media backup receiver
+==========================================
 Receives media files uploaded by media_backup.py running in Termux on Android.
 Exposed to the internet via ngrok HTTPS tunnel.
+Runs on macOS, Linux, and Windows (Python 3.8+).
 
-HOW TO START (two Terminal tabs):
-  Tab 1:  ngrok http 8019
-  Tab 2:  cd fetch_photos/server && python3 server.py
+HOW TO START (two terminal windows):
+  Window 1:  ngrok http 8019
+  Window 2:  cd fetch_photos/server
+             python3 server.py          # macOS / Linux
+             python  server.py          # Windows
 
-Configuration (environment variables):
+Configuration (environment variables or .env file):
   UPLOAD_TOKEN   Required auth token that the Android client must send in the
-                 X-Backup-Token header.  Set this once:
+                 X-Backup-Token header.
+
+                 macOS / Linux:
                      export UPLOAD_TOKEN="your_long_random_secret"
-                 Or put it in a .env file:
-                     echo 'UPLOAD_TOKEN=your_long_random_secret' > .env
+                 Windows (cmd):
+                     set UPLOAD_TOKEN=your_long_random_secret
+                 Windows (PowerShell):
+                     $env:UPLOAD_TOKEN="your_long_random_secret"
+
+                 Or create a .env file (copy from .env.example):
+                     echo UPLOAD_TOKEN=your_long_random_secret > .env
 
   BACKUP_DIR     Root directory where received files are stored.
                  Defaults to  ./Android_Media_Backup  next to this script.
@@ -30,14 +40,13 @@ API endpoints:
 
 import os
 import re
-import io
+import sys
 import csv
 import json
 import uuid
 import hmac
 import hashlib
 import logging
-import zipfile
 import urllib.request
 from pathlib import Path
 from datetime import datetime
@@ -442,7 +451,7 @@ GALLERY_HTML = """
 </head>
 <body>
   <h1>Android Media Backup</h1>
-  <p class="sub">ESP32 BLE HID · Termux · ngrok · macOS receiver</p>
+  <p class="sub">ESP32 BLE HID · Termux · ngrok · cross-platform receiver</p>
   <div class="bar">
     <span class="badge">{{ total }} files</span>
     <span class="badge">{{ total_mb }} MB</span>
@@ -501,18 +510,25 @@ def get_ngrok_url() -> str:
 
 if __name__ == "__main__":
     public_url = get_ngrok_url()
+    _is_windows = sys.platform.startswith("win")
 
     if not UPLOAD_TOKEN:
         log.warning("UPLOAD_TOKEN is not set — uploads will not be authenticated.")
-        log.warning("Set it:  export UPLOAD_TOKEN='your_secret'  then restart.")
+        if _is_windows:
+            log.warning("Set it (cmd):        set UPLOAD_TOKEN=your_secret")
+            log.warning("Set it (PowerShell): $env:UPLOAD_TOKEN='your_secret'")
+        else:
+            log.warning("Set it:  export UPLOAD_TOKEN='your_secret'  then restart.")
+        log.warning("Or create a .env file — see .env.example")
 
     if public_url:
         url_file = _BASE_DIR / "ngrok_url.txt"
         url_file.write_text(public_url + "\n")
         # Print URL to terminal but never print the token
         print(f"\n  ╔══════════════════════════════════════════════════════════╗")
-        print(f"  ║        Android Media Backup Server  —  ngrok active      ║")
+        print(f"  ║     Android Media Backup Server  —  ngrok active         ║")
         print(f"  ╠══════════════════════════════════════════════════════════╣")
+        print(f"  ║  Platform    :  {sys.platform}")
         print(f"  ║  Public URL  :  {public_url}")
         print(f"  ║  Health      :  {public_url}/health")
         print(f"  ║  Upload      :  {public_url}/upload        (POST)")
