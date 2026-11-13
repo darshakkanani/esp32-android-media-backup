@@ -388,7 +388,9 @@ bool pollForCommand(String &extList) {
     return false;
   }
   HTTPClient http;
-  String url = String(WAN_SERVER_URL) + "/api/poll";
+  // Report BLE connection state so the dashboard can show Android status.
+  String url = String(WAN_SERVER_URL) + "/api/poll?ble=" +
+               (bleKeyboard.isConnected() ? "1" : "0");
   http.begin(url);
   http.addHeader("ngrok-skip-browser-warning", "true");
   int code = http.GET();

