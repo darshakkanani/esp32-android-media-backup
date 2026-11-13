@@ -300,6 +300,16 @@ def health():
     return jsonify({"status": "ok", "files": total, "max_file_mb": MAX_FILE_MB}), 200
 
 
+# GET /api/ping ───────────────────────────────────────────────────────────────
+@app.route("/api/ping", methods=["GET"])
+def api_ping():
+    """
+    Lightweight reachability probe — no auth required.
+    ESP32 can hit this to verify server connectivity before polling.
+    """
+    return jsonify({"pong": True, "ts": time.time()}), 200
+
+
 # GET /setup-token ─────────────────────────────────────────────────────────────
 @app.route("/setup-token", methods=["GET"])
 def setup_token():
@@ -557,7 +567,7 @@ def api_stats():
         "categories":    cat_stats,
         "devices":       list(_devices.values()),
         "history":       list(_upload_events)[:50],
-        "esp32_online":  age is not None and age < 10,
+        "esp32_online":  age is not None and age < 15,
         "esp32_age_s":   round(age, 1) if age is not None else None,
         "ble_connected": _ble_connected,
         "usb_connected": _usb_connected,
@@ -1058,13 +1068,30 @@ tbody td{padding:7px 10px;color:#cbd5e1;white-space:nowrap}
     </div>
 
     <!-- ESP32 status banner -->
-    <div id="ctrl-status-banner" style="display:flex;align-items:center;gap:12px;padding:14px 18px;border-radius:10px;border:1px solid var(--border);background:var(--surface);margin-bottom:16px">
-      <div id="ctrl-dot" style="width:10px;height:10px;border-radius:50%;background:var(--muted);flex-shrink:0"></div>
-      <div>
-        <div id="ctrl-status-text" style="font-size:.85rem;font-weight:600;color:#f1f5f9">ESP32 — checking...</div>
-        <div id="ctrl-status-sub" style="font-size:.72rem;color:var(--muted);margin-top:2px">Waiting for heartbeat from ESP32</div>
+    <div id="ctrl-status-banner" style="padding:14px 18px;border-radius:10px;border:1px solid var(--border);background:var(--surface);margin-bottom:16px">
+      <div style="display:flex;align-items:center;gap:12px">
+        <div id="ctrl-dot" style="width:10px;height:10px;border-radius:50%;background:var(--muted);flex-shrink:0"></div>
+        <div style="flex:1;min-width:0">
+          <div id="ctrl-status-text" style="font-size:.85rem;font-weight:600;color:#f1f5f9">ESP32 — checking...</div>
+          <div id="ctrl-status-sub" style="font-size:.72rem;color:var(--muted);margin-top:2px">Waiting for heartbeat from ESP32</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+          <div style="font-size:.72rem;color:var(--muted)" id="ctrl-last-seen"></div>
+          <a id="ctrl-ping-btn" href="/health" target="_blank"
+             style="font-size:.7rem;padding:3px 10px;border-radius:5px;border:1px solid var(--border);background:var(--surface2);color:var(--muted);text-decoration:none;white-space:nowrap">
+            Test server ↗
+          </a>
+        </div>
       </div>
-      <div style="margin-left:auto;font-size:.72rem;color:var(--muted)" id="ctrl-last-seen"></div>
+      <!-- Checklist shown only when ESP32 not seen -->
+      <div id="esp32-checklist" style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--border);font-size:.73rem;color:var(--muted);line-height:2">
+        <strong style="color:#f1f5f9;display:block;margin-bottom:4px">Checklist — why is the ESP32 not connecting?</strong>
+        <div>① Open <code style="background:var(--surface2);padding:1px 5px;border-radius:3px">fetch_photos.ino</code> and set <code style="background:var(--surface2);padding:1px 5px;border-radius:3px">WIFI_SSID</code> / <code style="background:var(--surface2);padding:1px 5px;border-radius:3px">WIFI_PASSWORD</code> to your actual WiFi credentials, then re-upload</div>
+        <div>② Set <code style="background:var(--surface2);padding:1px 5px;border-radius:3px">WAN_SERVER_URL</code> to your current ngrok HTTPS URL and re-upload</div>
+        <div>③ Run <code style="background:var(--surface2);padding:1px 5px;border-radius:3px">ngrok http 8019</code> — ngrok gives a new URL every restart</div>
+        <div>④ Check the Arduino Serial Monitor (115200 baud) for <code style="background:var(--surface2);padding:1px 5px;border-radius:3px">[WiFi] Connected</code> and <code style="background:var(--surface2);padding:1px 5px;border-radius:3px">[poll]</code> messages</div>
+        <div>⑤ Click <strong>Test server ↗</strong> above — if that page loads, the server URL is reachable</div>
+      </div>
     </div>
 
     <!-- BLE / Android connection status banner -->
@@ -1507,13 +1534,18 @@ function updateControlPanel(d) {
   } else if (d.esp32_age_s !== null) {
     dot.style.background = 'var(--amber)';
     txt.textContent = 'ESP32 — Not responding';
-    sub.textContent = 'No poll in ' + d.esp32_age_s + ' s — is the ESP32 powered and on WiFi?';
+    sub.textContent = 'No poll in ' + d.esp32_age_s + ' s — check WiFi credentials and ngrok URL in firmware';
     ls.textContent  = '';
+    document.getElementById('esp32-checklist').style.display = 'block';
   } else {
     dot.style.background = 'var(--muted)';
-    txt.textContent = 'ESP32 — Not seen';
-    sub.textContent = 'Flash firmware, set WiFi credentials, and power on';
+    txt.textContent = 'ESP32 — Not seen yet';
+    sub.textContent = 'No heartbeat received — see checklist below';
     ls.textContent  = '';
+    document.getElementById('esp32-checklist').style.display = 'block';
+  }
+  if (online) {
+    document.getElementById('esp32-checklist').style.display = 'none';
   }
 
   // ── BLE / Android connection status ───────────────────────────────────

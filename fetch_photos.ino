@@ -444,9 +444,32 @@ void setup() {
   Serial.println("  ESP32 BLE HID — Media Exfiltration Lab");
   Serial.println("─────────────────────────────────────────────────");
   Serial.print  ("  Server     : "); Serial.println(WAN_SERVER_URL);
-  Serial.print  ("  WiFi       : "); Serial.println(WiFi.status() == WL_CONNECTED ? "Connected" : "Not connected");
+  Serial.print  ("  WiFi SSID  : "); Serial.println(WIFI_SSID);
+  Serial.print  ("  WiFi       : "); Serial.println(WiFi.status() == WL_CONNECTED ? "✓ Connected" : "✗ NOT connected — check WIFI_SSID / WIFI_PASSWORD");
+  Serial.print  ("  Local IP   : "); Serial.println(WiFi.localIP());
   Serial.print  ("  Poll every : "); Serial.print(POLL_INTERVAL_MS); Serial.println(" ms");
   Serial.print  ("  Cooldown   : "); Serial.print(COOLDOWN_MS / 1000); Serial.println(" s between fires");
+  Serial.println("─────────────────────────────────────────────────");
+
+  // ── Startup server ping — verify URL is reachable ──────────────────────
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.print("[startup] Pinging server... ");
+    HTTPClient http;
+    http.begin(String(WAN_SERVER_URL) + "/api/ping");
+    http.addHeader("ngrok-skip-browser-warning", "true");
+    int code = http.GET();
+    if (code == 200) {
+      Serial.println("OK — server reachable. Dashboard should show ESP32 Online.");
+    } else {
+      Serial.print("FAILED (HTTP "); Serial.print(code); Serial.println(")");
+      Serial.println("[startup] ✗ Server not reachable — check WAN_SERVER_URL and that ngrok is running.");
+    }
+    http.end();
+  } else {
+    Serial.println("[startup] ✗ Skipping ping — WiFi not connected.");
+    Serial.println("[startup]   → Open fetch_photos.ino, set WIFI_SSID and WIFI_PASSWORD, re-upload.");
+  }
+
   Serial.println("  Waiting for web trigger from dashboard...");
   Serial.println("─────────────────────────────────────────────────");
 }
