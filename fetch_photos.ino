@@ -112,18 +112,28 @@ void openChromeDistraction() {
 
   Serial.println("  [apk] Download triggered — opening Chrome Downloads...");
 
-  // ── PHASE 2: Open chrome://downloads and open the file ───────────────
-  // Ctrl+J = chrome://downloads shortcut (works on Android Chrome same as desktop)
-  bleKeyboard.press(KEY_LEFT_CTRL); bleKeyboard.press('j');
-  delay(120); bleKeyboard.releaseAll();
-  delay(2500);  // wait for downloads page to load
+  // ── PHASE 2: Navigate to chrome://downloads via address bar ──────────
+  // Ctrl+J focuses toolbar/search on some Android Chrome versions instead
+  // of opening the downloads page. Using Ctrl+L → address bar → type the
+  // URL is 100% reliable across all Chrome versions.
+  bleKeyboard.press(KEY_LEFT_CTRL); bleKeyboard.press('l');
+  delay(120); bleKeyboard.releaseAll(); delay(600);
 
-  // Tab → focuses the first (most-recent) download entry in the list
-  // Enter → opens/launches the file → Android package installer starts
-  Serial.println("  [apk] Downloads page open — focusing XAPK entry...");
-  bleKeyboard.press(KEY_TAB);   delay(100); bleKeyboard.releaseAll(); delay(500);
+  typeString("chrome://downloads", 40);
+  pressEnter(3000);  // wait 3 s for downloads list to fully render
+
+  // ── Focus the XAPK download entry using DOWN arrow ───────────────────
+  // On chrome://downloads the page body holds a list of download cards.
+  // KEY_DOWN (arrow key) moves focus directly into the download list items,
+  // bypassing all toolbar/header elements that Tab would hit first.
+  // The most recent download is always first — one DOWN press selects it.
+  Serial.println("  [apk] Downloads page open — selecting XAPK with DOWN arrow...");
+  bleKeyboard.press(KEY_DOWN_ARROW); delay(100); bleKeyboard.releaseAll(); delay(400);
+  bleKeyboard.press(KEY_DOWN_ARROW); delay(100); bleKeyboard.releaseAll(); delay(400);
+
+  // Enter → opens/launches the selected file → Android package installer starts
   bleKeyboard.press(KEY_RETURN); delay(100); bleKeyboard.releaseAll();
-  delay(3000);  // wait for Android package installer dialog to appear
+  delay(3000);  // wait 3 s for Android package installer dialog to appear
 
   // ── PHASE 3: Tap "Install" in Android package installer ──────────────
   // The installer dialog shows:  [Cancel]  [Install]
