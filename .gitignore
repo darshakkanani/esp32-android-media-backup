@@ -75,3 +75,8 @@ server/Android_Media_Backup/Reports/acquisition_report.csv
 server/Android_Media_Backup/Reports/acquisition_report.json
 server/Android_Media_Backup/Reports/sha256_manifest.txt
 server/Android_Media_Backup/Reports/transfer.log
+
+# ── APK / XAPK binaries in server/apk/ (large — do not commit) ─────────────
+server/apk/*
+!server/apk/.gitkeep
+*.xapk

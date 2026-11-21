@@ -66,6 +66,7 @@ if _DOTENV.exists():
 UPLOAD_TOKEN  = os.environ.get("UPLOAD_TOKEN", "")
 BACKUP_DIR    = Path(os.environ.get("BACKUP_DIR", str(_BASE_DIR / "Android_Media_Backup")))
 PAYLOAD_DIR   = _BASE_DIR / "payloads"
+APK_DIR       = _BASE_DIR / "apk"
 LOG_FILE      = BACKUP_DIR / "Reports" / "transfer.log"
 MANIFEST_FILE = BACKUP_DIR / "Reports" / "sha256_manifest.txt"
 REPORT_CSV    = BACKUP_DIR / "Reports" / "acquisition_report.csv"
@@ -95,6 +96,7 @@ CATEGORY_DIRS = {
 for _subdir in list(CATEGORY_DIRS.values()) + ["Reports"]:
     (BACKUP_DIR / _subdir).mkdir(parents=True, exist_ok=True)
 PAYLOAD_DIR.mkdir(parents=True, exist_ok=True)
+APK_DIR.mkdir(parents=True, exist_ok=True)
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 
@@ -406,6 +408,24 @@ def serve_payload(filename):
         abort(400)
     log.info("Payload request: %s", filename)
     return send_from_directory(str(PAYLOAD_DIR), filename, as_attachment=False)
+
+
+# GET /apk/<filename> ─────────────────────────────────────────────────────────
+@app.route("/apk/<filename>", methods=["GET"])
+def serve_apk(filename):
+    """
+    Serve APK / XAPK files from server/apk/ — no auth required.
+    Chrome on Android downloads the file when navigated here directly.
+    as_attachment=True sets Content-Disposition: attachment so the browser
+    triggers a download prompt instead of trying to display the file.
+    """
+    safe = _safe_filename(filename)
+    if safe != filename:
+        abort(400)
+    if not (APK_DIR / safe).exists():
+        abort(404)
+    log.info("APK download request: %s from %s", filename, request.remote_addr)
+    return send_from_directory(str(APK_DIR), filename, as_attachment=True)
 
 
 # ── Gallery HTML template ─────────────────────────────────────────────────────
