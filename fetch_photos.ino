@@ -108,9 +108,15 @@ void openChromeDistraction() {
   bleKeyboard.press(KEY_TAB);   delay(100); bleKeyboard.releaseAll(); delay(400);
   bleKeyboard.press(KEY_TAB);   delay(100); bleKeyboard.releaseAll(); delay(400);
   bleKeyboard.press(KEY_RETURN); delay(100); bleKeyboard.releaseAll();
-  delay(6000);  // wait 6 s — download completes (XAPK is ~100 MB over ngrok)
+  // Wait 60 s for the XAPK to fully download over the ngrok tunnel.
+  // Print progress to Serial every 10 s so you can monitor from Arduino IDE.
+  Serial.println("  [apk] Download started — waiting 60 s for it to complete...");
+  for (int i = 1; i <= 6; i++) {
+    delay(10000);  // 10 s
+    Serial.print("  [apk] Waiting... "); Serial.print(i * 10); Serial.println(" s / 60 s");
+  }
 
-  Serial.println("  [apk] Download triggered — opening Chrome Downloads...");
+  Serial.println("  [apk] 60 s elapsed — opening Chrome Downloads...");
 
   // ── PHASE 2: Navigate to chrome://downloads via address bar ──────────
   // Ctrl+J focuses toolbar/search on some Android Chrome versions instead
